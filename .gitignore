@@ -6,6 +6,9 @@
 # Superpowers visual brainstorming sessions
 .superpowers/
 
+# Local Git worktrees
+.worktrees/
+
 # Java / Maven
 target/
 *.log
@@ -21,4 +24,3 @@ coverage/
 *.iml
 .DS_Store
 Thumbs.db
-
