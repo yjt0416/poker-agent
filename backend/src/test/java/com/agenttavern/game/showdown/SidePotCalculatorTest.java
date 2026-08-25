@@ -135,6 +135,31 @@ class SidePotCalculatorTest {
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @Test
+    void potAcceptsSixEligiblePlayers() {
+        Pot pot = new Pot(60, Set.of(
+                player(0), player(1), player(2), player(3), player(4), player(5)));
+
+        assertThat(pot.amount()).isEqualTo(60);
+        assertThat(pot.eligiblePlayers()).hasSize(6);
+    }
+
+    @Test
+    void potRejectsSevenEligiblePlayers() {
+        Set<PlayerId> sevenPlayers = Set.of(
+                player(0),
+                player(1),
+                player(2),
+                player(3),
+                player(4),
+                player(5),
+                player(6));
+
+        assertThatThrownBy(() -> new Pot(70, sevenPlayers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at most 6");
+    }
+
     private static SeatState committed(int seatIndex, long amount, PlayerStatus status) {
         long stack = status == ALL_IN || status == OUT ? 0 : 1_000;
         return new SeatState(player(seatIndex), seatIndex, stack, 0, amount, status);
