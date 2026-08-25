@@ -28,6 +28,10 @@ public record SeatState(
     }
 
     public SeatState withContribution(long chips) {
+        if (status != PlayerStatus.ACTIVE) {
+            throw new IllegalStateException(
+                    "withContribution requires ACTIVE status, was " + status);
+        }
         if (chips < 0) {
             throw new IllegalArgumentException("contribution must be non-negative");
         }
@@ -48,6 +52,9 @@ public record SeatState(
     }
 
     public SeatState fold() {
+        if (status != PlayerStatus.ACTIVE) {
+            throw new IllegalStateException("fold requires ACTIVE status, was " + status);
+        }
         return new SeatState(
                 playerId, seatIndex, stack, streetCommitted, handCommitted, PlayerStatus.FOLDED);
     }

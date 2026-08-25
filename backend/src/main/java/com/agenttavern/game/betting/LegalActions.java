@@ -22,6 +22,23 @@ public record LegalActions(
         if (minRaiseTo.isPresent() && minRaiseTo.getAsLong() <= 0) {
             throw new IllegalArgumentException("minimum raise target must be positive");
         }
+        if (types.contains(ActionType.CALL) != (callAmount > 0)) {
+            throw new IllegalArgumentException(
+                    "CALL must be present exactly when callAmount is positive");
+        }
+        if (types.contains(ActionType.RAISE) != minRaiseTo.isPresent()) {
+            throw new IllegalArgumentException(
+                    "RAISE must be present exactly when minRaiseTo is present");
+        }
+        if (minRaiseTo.isPresent() && minRaiseTo.getAsLong() > maxRaiseTo) {
+            throw new IllegalArgumentException("minRaiseTo cannot exceed maxRaiseTo");
+        }
+        if (callAmount > maxRaiseTo) {
+            throw new IllegalArgumentException("callAmount cannot exceed maxRaiseTo");
+        }
+        if (types.contains(ActionType.ALL_IN) && maxRaiseTo == 0) {
+            throw new IllegalArgumentException("ALL_IN requires a positive maxRaiseTo target");
+        }
     }
 
     public static LegalActions calculate(
@@ -37,11 +54,15 @@ public record LegalActions(
             throw new IllegalArgumentException("lastFullRaiseSize must be positive");
         }
 
-        long maxRaiseTo = Math.addExact(actor.streetCommitted(), actor.stack());
         if (actor.status() != PlayerStatus.ACTIVE) {
-            return new LegalActions(Set.of(), 0, OptionalLong.empty(), maxRaiseTo);
+            return new LegalActions(Set.of(), 0, OptionalLong.empty(), 0);
+        }
+        if (currentBet < actor.streetCommitted()) {
+            throw new IllegalArgumentException(
+                    "currentBet cannot be below actor.streetCommitted");
         }
 
+        long maxRaiseTo = Math.addExact(actor.streetCommitted(), actor.stack());
         EnumSet<ActionType> types = EnumSet.noneOf(ActionType.class);
         long needed = currentBet > actor.streetCommitted()
                 ? currentBet - actor.streetCommitted()
@@ -51,8 +72,10 @@ public record LegalActions(
             types.add(ActionType.CHECK);
         } else {
             types.add(ActionType.FOLD);
-            types.add(ActionType.CALL);
             callAmount = Math.min(needed, actor.stack());
+            if (callAmount > 0) {
+                types.add(ActionType.CALL);
+            }
         }
         if (actor.stack() > 0) {
             types.add(ActionType.ALL_IN);

@@ -10,6 +10,7 @@ import static com.agenttavern.game.betting.PlayerStatus.FOLDED;
 import static com.agenttavern.game.betting.PlayerStatus.OUT;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -132,6 +133,18 @@ class LegalActionsTest {
     }
 
     @Test
+    void terminalSeatsCannotContribute() {
+        for (PlayerStatus status : new PlayerStatus[] {FOLDED, PlayerStatus.ALL_IN, OUT}) {
+            SeatState seat = terminalSeat(status);
+            long chips = status == FOLDED ? seat.stack() : 0;
+
+            assertThatThrownBy(() -> seat.withContribution(chips))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("withContribution requires ACTIVE status, was " + status);
+        }
+    }
+
+    @Test
     void foldAndStreetResetReturnNewStatesWithoutChangingChipOwnership() {
         SeatState actor = new SeatState(playerId(), 2, 100, 20, 50, ACTIVE);
 
@@ -144,6 +157,33 @@ class LegalActionsTest {
         assertThat(reset.streetCommitted()).isZero();
         assertThat(reset.handCommitted()).isEqualTo(50);
         assertThat(reset.status()).isEqualTo(FOLDED);
+    }
+
+    @Test
+    void terminalSeatsCannotFold() {
+        for (PlayerStatus status : new PlayerStatus[] {FOLDED, PlayerStatus.ALL_IN, OUT}) {
+            SeatState seat = terminalSeat(status);
+
+            assertThatThrownBy(seat::fold)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("fold requires ACTIVE status, was " + status);
+        }
+    }
+
+    @Test
+    void streetResetPreservesEveryPlayerStatus() {
+        for (PlayerStatus status : PlayerStatus.values()) {
+            SeatState source = status == ACTIVE
+                    ? new SeatState(playerId(), 0, 100, 25, 50, ACTIVE)
+                    : terminalSeat(status);
+
+            SeatState reset = source.resetStreet();
+
+            assertThat(reset.status()).as("status %s", status).isEqualTo(status);
+            assertThat(reset.stack()).as("status %s", status).isEqualTo(source.stack());
+            assertThat(reset.streetCommitted()).as("status %s", status).isZero();
+            assertThat(reset.handCommitted()).as("status %s", status).isEqualTo(50);
+        }
     }
 
     @Test
@@ -171,6 +211,38 @@ class LegalActionsTest {
 
         assertThatIllegalArgumentException().isThrownBy(() -> actor.settled(-1));
         assertThatThrownBy(() -> enormous.settled(1)).isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void settlementIsTheHandBoundaryForEveryPlayerStatus() {
+        for (PlayerStatus status : PlayerStatus.values()) {
+            SeatState source = status == ACTIVE
+                    ? new SeatState(playerId(), 0, 100, 25, 50, ACTIVE)
+                    : terminalSeat(status);
+
+            SeatState zeroPayout = source.settled(0);
+            SeatState winningPayout = source.settled(25);
+            long expectedZeroPayoutStack = status == ACTIVE || status == FOLDED ? 100 : 0;
+            long expectedWinningStack = status == ACTIVE || status == FOLDED ? 125 : 25;
+            PlayerStatus expectedZeroPayoutStatus = expectedZeroPayoutStack > 0 ? ACTIVE : OUT;
+
+            assertThat(zeroPayout.stack())
+                    .as("zero payout stack for %s", status)
+                    .isEqualTo(expectedZeroPayoutStack);
+            assertThat(zeroPayout.status())
+                    .as("zero payout status for %s", status)
+                    .isEqualTo(expectedZeroPayoutStatus);
+            assertThat(winningPayout.stack())
+                    .as("winning stack for %s", status)
+                    .isEqualTo(expectedWinningStack);
+            assertThat(winningPayout.status())
+                    .as("winning status for %s", status)
+                    .isEqualTo(ACTIVE);
+            assertThat(zeroPayout.streetCommitted()).isZero();
+            assertThat(zeroPayout.handCommitted()).isZero();
+            assertThat(winningPayout.streetCommitted()).isZero();
+            assertThat(winningPayout.handCommitted()).isZero();
+        }
     }
 
     @Test
@@ -253,12 +325,39 @@ class LegalActionsTest {
     }
 
     @Test
+    void inactiveActorIsFilteredBeforeItsUnusedAllInTargetCanOverflow() {
+        SeatState folded = new SeatState(
+                playerId(), 0, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, FOLDED);
+
+        assertThatNoException()
+                .isThrownBy(() -> LegalActions.calculate(folded, 0, 1, true));
+        LegalActions legal = LegalActions.calculate(folded, 0, 1, true);
+
+        assertThat(legal)
+                .isEqualTo(new LegalActions(Set.of(), 0, OptionalLong.empty(), 0));
+    }
+
+    @Test
     void activeZeroStackCanCheckButCannotRaiseOrGoAllIn() {
         SeatState actor = seat(0, 0, 0, ACTIVE);
 
         LegalActions legal = LegalActions.calculate(actor, 0, 100, true);
 
         assertThat(legal.types()).containsExactly(CHECK);
+        assertThat(legal.callAmount()).isZero();
+        assertThat(legal.minRaiseTo()).isEmpty();
+        assertThat(legal.maxRaiseTo()).isZero();
+    }
+
+    @Test
+    void activeZeroStackFacingABetCanFoldButCannotCallZeroChips() {
+        SeatState actor = seat(0, 0, 0, ACTIVE);
+
+        assertThatNoException()
+                .isThrownBy(() -> LegalActions.calculate(actor, 100, 100, true));
+        LegalActions legal = LegalActions.calculate(actor, 100, 100, true);
+
+        assertThat(legal.types()).containsExactly(FOLD);
         assertThat(legal.callAmount()).isZero();
         assertThat(legal.minRaiseTo()).isEmpty();
         assertThat(legal.maxRaiseTo()).isZero();
@@ -274,6 +373,47 @@ class LegalActionsTest {
         assertThat(legal.types()).containsExactlyInAnyOrder(CHECK, ALL_IN);
         assertThatThrownBy(() -> legal.types().add(FOLD))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void callMembershipMustMatchAPositiveCallAmount() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(CALL), 0, OptionalLong.empty(), 100))
+                .withMessage("CALL must be present exactly when callAmount is positive");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(FOLD), 25, OptionalLong.empty(), 100))
+                .withMessage("CALL must be present exactly when callAmount is positive");
+    }
+
+    @Test
+    void raiseMembershipMustMatchAPresentMinimumTarget() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(RAISE), 0, OptionalLong.empty(), 100))
+                .withMessage("RAISE must be present exactly when minRaiseTo is present");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(CHECK), 0, OptionalLong.of(50), 100))
+                .withMessage("RAISE must be present exactly when minRaiseTo is present");
+    }
+
+    @Test
+    void minimumRaiseTargetCannotExceedMaximumTarget() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(RAISE), 0, OptionalLong.of(101), 100))
+                .withMessage("minRaiseTo cannot exceed maxRaiseTo");
+    }
+
+    @Test
+    void callAmountCannotExceedMaximumTarget() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(CALL), 101, OptionalLong.empty(), 100))
+                .withMessage("callAmount cannot exceed maxRaiseTo");
+    }
+
+    @Test
+    void advertisedAllInRequiresAPositiveTarget() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new LegalActions(Set.of(ALL_IN), 0, OptionalLong.empty(), 0))
+                .withMessage("ALL_IN requires a positive maxRaiseTo target");
     }
 
     @Test
@@ -312,11 +452,36 @@ class LegalActionsTest {
         SeatState minTargetOverflow = new SeatState(
                 playerId(), 0, Long.MAX_VALUE, 0, 0, ACTIVE);
 
-        assertThatThrownBy(() -> LegalActions.calculate(maxTargetOverflow, 0, 1, true))
+        assertThatThrownBy(() -> LegalActions.calculate(
+                        maxTargetOverflow, Long.MAX_VALUE, 1, true))
                 .isInstanceOf(ArithmeticException.class);
         assertThatThrownBy(() -> LegalActions.calculate(
                         minTargetOverflow, Long.MAX_VALUE, 1, true))
                 .isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void activeActorRejectsZeroOrPositiveCurrentBetBelowItsCommitment() {
+        SeatState actor = seat(0, 100, 100, ACTIVE);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> LegalActions.calculate(actor, 0, 50, true))
+                .withMessage("currentBet cannot be below actor.streetCommitted");
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> LegalActions.calculate(actor, 50, 50, true))
+                .withMessage("currentBet cannot be below actor.streetCommitted");
+    }
+
+    @Test
+    void currentBetEqualToCommitmentKeepsCheckAndForwardRaiseTargets() {
+        SeatState actor = seat(0, 100, 100, ACTIVE);
+
+        LegalActions legal = LegalActions.calculate(actor, 100, 50, true);
+
+        assertThat(legal.types()).containsExactlyInAnyOrder(CHECK, RAISE, ALL_IN);
+        assertThat(legal.callAmount()).isZero();
+        assertThat(legal.minRaiseTo()).hasValue(150);
+        assertThat(legal.maxRaiseTo()).isEqualTo(200);
     }
 
     private static SeatState seat(
@@ -332,5 +497,10 @@ class LegalActionsTest {
 
     private static PlayerId playerId() {
         return new PlayerId(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+    }
+
+    private static SeatState terminalSeat(PlayerStatus status) {
+        long stack = status == FOLDED ? 100 : 0;
+        return new SeatState(playerId(), 0, stack, 25, 50, status);
     }
 }
