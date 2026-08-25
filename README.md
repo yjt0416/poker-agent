@@ -11,13 +11,13 @@ Install Java 21.
 Windows:
 
 ```powershell
-backend\mvnw.cmd verify
+backend\mvnw.cmd -f backend\pom.xml verify
 ```
 
 Unix or CI:
 
 ```sh
-./backend/mvnw verify
+./backend/mvnw -f backend/pom.xml verify
 ```
 
 ## Secrets
