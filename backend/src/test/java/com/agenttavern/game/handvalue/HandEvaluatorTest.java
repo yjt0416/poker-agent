@@ -176,14 +176,61 @@ class HandEvaluatorTest {
                 .withMessage("tieBreakers must contain only ranks from 2 to 14");
     }
 
-    @Test
-    void sameCategoryComparisonRejectsMismatchedTieBreakerLengths() {
-        HandValue left = new HandValue(ONE_PAIR, List.of(14, 13, 12, 11));
-        HandValue right = new HandValue(ONE_PAIR, List.of(14, 13, 12));
-
+    @ParameterizedTest
+    @MethodSource("wrongLengthTieBreakers")
+    void handValueRejectsWrongTieBreakerLength(
+            HandCategory category, List<Integer> tieBreakers) {
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> left.compareTo(right))
-                .withMessage("Cannot compare hand values with different tie-breaker lengths");
+                .isThrownBy(() -> new HandValue(category, tieBreakers));
+    }
+
+    static Stream<Arguments> wrongLengthTieBreakers() {
+        return Stream.of(
+                arguments(HIGH_CARD, List.of(14, 13, 12, 11)),
+                arguments(HIGH_CARD, List.of(14, 13, 12, 11, 9, 8)),
+                arguments(ONE_PAIR, List.of(14, 13, 12)),
+                arguments(ONE_PAIR, List.of(14, 13, 12, 11, 9)),
+                arguments(TWO_PAIR, List.of(14, 13)),
+                arguments(TWO_PAIR, List.of(14, 13, 12, 11)),
+                arguments(THREE_OF_A_KIND, List.of(14, 13)),
+                arguments(THREE_OF_A_KIND, List.of(14, 13, 12, 11)),
+                arguments(STRAIGHT, List.of(14, 13)),
+                arguments(FLUSH, List.of(14, 13, 12, 11)),
+                arguments(FLUSH, List.of(14, 13, 12, 11, 9, 8)),
+                arguments(FULL_HOUSE, List.of(14)),
+                arguments(FULL_HOUSE, List.of(14, 13, 12)),
+                arguments(FOUR_OF_A_KIND, List.of(14)),
+                arguments(FOUR_OF_A_KIND, List.of(14, 13, 12)),
+                arguments(STRAIGHT_FLUSH, List.of(14, 13)));
+    }
+
+    @ParameterizedTest
+    @MethodSource("nonCanonicalTieBreakers")
+    void handValueRejectsNonCanonicalTieBreakers(
+            HandCategory category, List<Integer> tieBreakers) {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new HandValue(category, tieBreakers));
+    }
+
+    static Stream<Arguments> nonCanonicalTieBreakers() {
+        return Stream.of(
+                arguments(HIGH_CARD, List.of(13, 14, 9, 6, 3)),
+                arguments(HIGH_CARD, List.of(14, 13, 13, 6, 3)),
+                arguments(ONE_PAIR, List.of(14, 13, 11, 12)),
+                arguments(ONE_PAIR, List.of(14, 14, 9, 3)),
+                arguments(ONE_PAIR, List.of(14, 13, 13, 3)),
+                arguments(TWO_PAIR, List.of(9, 14, 3)),
+                arguments(TWO_PAIR, List.of(14, 14, 3)),
+                arguments(TWO_PAIR, List.of(14, 9, 14)),
+                arguments(THREE_OF_A_KIND, List.of(14, 9, 13)),
+                arguments(THREE_OF_A_KIND, List.of(14, 14, 3)),
+                arguments(THREE_OF_A_KIND, List.of(14, 9, 9)),
+                arguments(STRAIGHT, List.of(4)),
+                arguments(FLUSH, List.of(13, 14, 9, 6, 3)),
+                arguments(FLUSH, List.of(14, 13, 13, 6, 3)),
+                arguments(FULL_HOUSE, List.of(14, 14)),
+                arguments(FOUR_OF_A_KIND, List.of(14, 14)),
+                arguments(STRAIGHT_FLUSH, List.of(4)));
     }
 
     private static List<Card> cards(String notation) {
