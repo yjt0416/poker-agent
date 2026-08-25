@@ -233,6 +233,22 @@ class HandEvaluatorTest {
                 arguments(STRAIGHT_FLUSH, List.of(4)));
     }
 
+    @ParameterizedTest
+    @MethodSource("straightPatternsForNonStraightCategories")
+    void handValueRejectsStraightPatternsForNonStraightCategories(
+            HandCategory category, List<Integer> tieBreakers) {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> new HandValue(category, tieBreakers));
+    }
+
+    static Stream<Arguments> straightPatternsForNonStraightCategories() {
+        return Stream.of(
+                arguments(HIGH_CARD, List.of(14, 13, 12, 11, 10)),
+                arguments(HIGH_CARD, List.of(14, 5, 4, 3, 2)),
+                arguments(FLUSH, List.of(14, 13, 12, 11, 10)),
+                arguments(FLUSH, List.of(14, 5, 4, 3, 2)));
+    }
+
     private static List<Card> cards(String notation) {
         return Arrays.stream(notation.split(" ")).map(HandEvaluatorTest::card).toList();
     }

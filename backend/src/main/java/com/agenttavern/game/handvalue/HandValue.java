@@ -55,7 +55,13 @@ public record HandValue(HandCategory category, List<Integer> tieBreakers)
 
     private static void validateOrder(HandCategory category, List<Integer> tieBreakers) {
         switch (category) {
-            case HIGH_CARD, FLUSH -> requireDescending(tieBreakers, 0);
+            case HIGH_CARD, FLUSH -> {
+                requireDescending(tieBreakers, 0);
+                if (formsStraight(tieBreakers)) {
+                    throw new IllegalArgumentException(
+                            "high-card and flush ranks must not form a straight");
+                }
+            }
             case ONE_PAIR, THREE_OF_A_KIND -> requireDescending(tieBreakers, 1);
             case TWO_PAIR -> {
                 if (tieBreakers.get(0) <= tieBreakers.get(1)) {
@@ -71,6 +77,17 @@ public record HandValue(HandCategory category, List<Integer> tieBreakers)
                 // The vector positions already identify the made ranks and kicker.
             }
         }
+    }
+
+    private static boolean formsStraight(List<Integer> descendingRanks) {
+        boolean consecutive = true;
+        for (int index = 1; index < descendingRanks.size(); index++) {
+            if (descendingRanks.get(index - 1) != descendingRanks.get(index) + 1) {
+                consecutive = false;
+                break;
+            }
+        }
+        return consecutive || descendingRanks.equals(List.of(14, 5, 4, 3, 2));
     }
 
     private static void requireDescending(List<Integer> tieBreakers, int startIndex) {
