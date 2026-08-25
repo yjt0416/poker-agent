@@ -11,6 +11,9 @@
 
 # Java / Maven
 target/
+backend/target/
+build/
+.jqwik-database
 *.log
 
 # Node / frontend
