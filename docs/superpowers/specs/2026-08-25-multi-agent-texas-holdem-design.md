@@ -233,6 +233,11 @@ DeepSeek JSON Output 要求请求设置 `response_format={"type":"json_object"}`
 ### 9.3 视觉品质
 
 - 最终 UI 以用户提供的精致奇幻酒馆参考图为最低品质目标。
+- 已批准的玩家模式高保真视觉稿是前端实现的直接视觉基准：
+
+  ![Approved Agent Tavern player-mode visual](../../design-assets/agent-tavern-player-mode-v1.png)
+
+- 生成与定向修订提示词保存在 [视觉稿提示词记录](../../design-assets/agent-tavern-player-mode-v1.prompt.md)。实现允许为响应式布局、可访问性和真实交互做必要调整，但不得降低其材质、信息层级、角色可见性和整体精致度。
 - 人物资产可以轻量，但 UI 不得粗糙：使用统一木纹、丝绒、黄铜、暖光、边框、卡背、筹码、图标和按钮资产。
 - 首发八名角色均为透明背景 2D Q 版立绘，至少提供待机、思考、得意和紧张四种表现。
 - 发牌、下注、筹码入池、胜者收池、全押和淘汰具有独立动画。
