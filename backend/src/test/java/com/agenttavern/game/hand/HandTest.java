@@ -2,7 +2,9 @@ package com.agenttavern.game.hand;
 
 import static com.agenttavern.game.betting.PlayerStatus.ACTIVE;
 import static com.agenttavern.game.betting.PlayerStatus.ALL_IN;
+import static com.agenttavern.game.betting.Street.FLOP;
 import static com.agenttavern.game.betting.Street.PREFLOP;
+import static com.agenttavern.game.betting.Street.TURN;
 import static com.agenttavern.game.card.Rank.ACE;
 import static com.agenttavern.game.card.Rank.EIGHT;
 import static com.agenttavern.game.card.Rank.FIVE;
@@ -449,6 +451,110 @@ class HandTest {
         assertThat(hand.legalActions().callAmount()).isEqualTo(40);
         assertThat(hand.legalActions().minRaiseTo()).hasValue(140);
         assertThat(hand.legalActions().maxRaiseTo()).isEqualTo(1_000);
+    }
+
+    @Test
+    void impossibleScheduledRaiseTargetStillLetsTheOnlyActivePlayerFinishTheHand() {
+        PlayerStack button = player(94, 5, 100);
+        PlayerStack smallBlind = player(95, 0, 1);
+        PlayerStack bigBlind = player(96, 2, 1);
+        BlindLevel enormousBlinds = new BlindLevel(Long.MAX_VALUE / 2, Long.MAX_VALUE);
+
+        Hand hand = Hand.start(
+                        hand(16),
+                        List.of(button, smallBlind, bigBlind),
+                        5,
+                        enormousBlinds,
+                        Deck.ordered(fixedCardsForThreePlayers()))
+                .hand();
+
+        assertThat(hand.actor().playerId()).isEqualTo(button.playerId());
+        assertThat(hand.legalActions().types()).containsExactlyInAnyOrder(
+                com.agenttavern.game.betting.ActionType.FOLD,
+                com.agenttavern.game.betting.ActionType.CALL,
+                com.agenttavern.game.betting.ActionType.ALL_IN);
+        assertThat(hand.legalActions().callAmount()).isEqualTo(1);
+        assertThat(hand.legalActions().minRaiseTo()).isEmpty();
+
+        HandTransition folded = hand.act(button.playerId(), PlayerAction.fold());
+
+        assertThat(folded.hand().isComplete()).isTrue();
+        assertThat(folded.hand().totalChipsInSystem()).isEqualTo(102);
+        assertThat(folded.events())
+                .extracting(Object::getClass)
+                .containsExactly(
+                        HandEvent.PlayerActed.class,
+                        HandEvent.CommunityCardsDealt.class,
+                        HandEvent.CommunityCardsDealt.class,
+                        HandEvent.CommunityCardsDealt.class,
+                        HandEvent.PotsAwarded.class,
+                        HandEvent.HandCompleted.class);
+    }
+
+    @Test
+    void flopFoldCompletionKeepsFlopBoardAndRejectsFurtherActions() {
+        PlayerStack button = player(97, 4, 1_000);
+        PlayerStack bigBlind = player(98, 1, 1_000);
+        Hand hand = Hand.start(
+                        hand(17),
+                        List.of(button, bigBlind),
+                        4,
+                        BLINDS,
+                        Deck.ordered(fixedCardsForHeadsUp()))
+                .hand();
+
+        hand = hand.act(button.playerId(), PlayerAction.call()).hand();
+        hand = hand.act(bigBlind.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(bigBlind.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(button.playerId(), PlayerAction.allIn(900)).hand();
+        HandTransition fold = hand.act(bigBlind.playerId(), PlayerAction.fold());
+
+        Hand completed = fold.hand();
+        assertThat(completed.isComplete()).isTrue();
+        assertThat(completed.street()).isEqualTo(FLOP);
+        assertThat(completed.board()).hasSize(3);
+        assertThat(completed.actor()).isNull();
+        assertThat(completed.legalActions().types()).isEmpty();
+        assertThat(fold.events()).extracting(Object::getClass).containsExactly(
+                HandEvent.PlayerActed.class,
+                HandEvent.PotsAwarded.class,
+                HandEvent.HandCompleted.class);
+        assertThatThrownBy(() -> completed.act(button.playerId(), PlayerAction.check()))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void turnFoldCompletionKeepsTurnBoardAndRejectsFurtherActions() {
+        PlayerStack button = player(99, 4, 1_000);
+        PlayerStack bigBlind = player(100, 1, 1_000);
+        Hand hand = Hand.start(
+                        hand(18),
+                        List.of(button, bigBlind),
+                        4,
+                        BLINDS,
+                        Deck.ordered(fixedCardsForHeadsUp()))
+                .hand();
+
+        hand = hand.act(button.playerId(), PlayerAction.call()).hand();
+        hand = hand.act(bigBlind.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(bigBlind.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(button.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(bigBlind.playerId(), PlayerAction.check()).hand();
+        hand = hand.act(button.playerId(), PlayerAction.allIn(900)).hand();
+        HandTransition fold = hand.act(bigBlind.playerId(), PlayerAction.fold());
+
+        Hand completed = fold.hand();
+        assertThat(completed.isComplete()).isTrue();
+        assertThat(completed.street()).isEqualTo(TURN);
+        assertThat(completed.board()).hasSize(4);
+        assertThat(completed.actor()).isNull();
+        assertThat(completed.legalActions().types()).isEmpty();
+        assertThat(fold.events()).extracting(Object::getClass).containsExactly(
+                HandEvent.PlayerActed.class,
+                HandEvent.PotsAwarded.class,
+                HandEvent.HandCompleted.class);
+        assertThatThrownBy(() -> completed.act(button.playerId(), PlayerAction.check()))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

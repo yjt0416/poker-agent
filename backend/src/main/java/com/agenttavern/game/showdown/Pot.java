@@ -1,6 +1,9 @@
 package com.agenttavern.game.showdown;
 
 import com.agenttavern.game.betting.PlayerId;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 public record Pot(long amount, Set<PlayerId> eligiblePlayers) {
@@ -20,6 +23,9 @@ public record Pot(long amount, Set<PlayerId> eligiblePlayers) {
         if (eligiblePlayers.stream().anyMatch(playerId -> playerId == null)) {
             throw new IllegalArgumentException("eligiblePlayers must not contain null");
         }
-        eligiblePlayers = Set.copyOf(eligiblePlayers);
+        Set<PlayerId> canonicalPlayers = new LinkedHashSet<>(eligiblePlayers.stream()
+                .sorted(Comparator.comparing(PlayerId::value))
+                .toList());
+        eligiblePlayers = Collections.unmodifiableSet(canonicalPlayers);
     }
 }

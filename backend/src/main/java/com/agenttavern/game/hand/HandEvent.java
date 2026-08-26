@@ -8,6 +8,7 @@ import com.agenttavern.game.betting.SeatState;
 import com.agenttavern.game.betting.Street;
 import com.agenttavern.game.card.Card;
 import com.agenttavern.game.showdown.Pot;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -166,6 +167,9 @@ public sealed interface HandEvent
                 eligiblePlayers.addAll(pot.eligiblePlayers());
                 totalPots = Math.addExact(totalPots, pot.amount());
             }
+            if (eligiblePlayers.size() > 6) {
+                throw new IllegalArgumentException("awarded pots must contain at most six players");
+            }
             long totalPayouts = 0;
             for (Map.Entry<PlayerId, Long> payout : payouts.entrySet()) {
                 if (payout.getValue() <= 0) {
@@ -179,6 +183,7 @@ public sealed interface HandEvent
             if (totalPayouts != totalPots) {
                 throw new IllegalArgumentException("payouts must equal awarded pots");
             }
+            validatePayoutFeasibility(pots, payouts, eligiblePlayers);
         }
     }
 
@@ -211,6 +216,40 @@ public sealed interface HandEvent
         source.forEach((playerId, cards) ->
                 copy.put(requireNonNull(playerId, "playerId"), List.copyOf(cards)));
         return Collections.unmodifiableMap(copy);
+    }
+
+    private static void validatePayoutFeasibility(
+            List<Pot> pots, Map<PlayerId, Long> payouts, Set<PlayerId> eligiblePlayers) {
+        List<PlayerId> players = new ArrayList<>(eligiblePlayers);
+        int subsetCount = 1 << players.size();
+        for (int subset = 1; subset < subsetCount; subset++) {
+            long demand = 0;
+            for (int playerIndex = 0; playerIndex < players.size(); playerIndex++) {
+                if ((subset & (1 << playerIndex)) != 0) {
+                    demand = Math.addExact(demand, payouts.getOrDefault(players.get(playerIndex), 0L));
+                }
+            }
+            long capacity = 0;
+            for (Pot pot : pots) {
+                if (isEligibleForSubset(pot, players, subset)) {
+                    capacity = Math.addExact(capacity, pot.amount());
+                }
+            }
+            if (demand > capacity) {
+                throw new IllegalArgumentException(
+                        "payouts cannot be allocated across the awarded pot eligibility");
+            }
+        }
+    }
+
+    private static boolean isEligibleForSubset(Pot pot, List<PlayerId> players, int subset) {
+        for (int playerIndex = 0; playerIndex < players.size(); playerIndex++) {
+            if ((subset & (1 << playerIndex)) != 0
+                    && pot.eligiblePlayers().contains(players.get(playerIndex))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void validateSeatIndex(int seatIndex) {

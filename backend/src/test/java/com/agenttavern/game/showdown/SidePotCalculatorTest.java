@@ -136,6 +136,15 @@ class SidePotCalculatorTest {
     }
 
     @Test
+    void potCopiesEligiblePlayersInPlayerIdValueOrder() {
+        Set<PlayerId> players = new LinkedHashSet<>(List.of(player(5), player(1), player(3)));
+
+        Pot pot = new Pot(10, players);
+
+        assertThat(pot.eligiblePlayers()).containsExactly(player(1), player(3), player(5));
+    }
+
+    @Test
     void potAcceptsSixEligiblePlayers() {
         Pot pot = new Pot(60, Set.of(
                 player(0), player(1), player(2), player(3), player(4), player(5)));

@@ -446,18 +446,25 @@ class LegalActionsTest {
     }
 
     @Test
-    void legalActionCalculationRejectsTargetOverflow() {
+    void legalActionCalculationRejectsAnUnrepresentableActorAllInTarget() {
         SeatState maxTargetOverflow = new SeatState(
                 playerId(), 0, 1, Long.MAX_VALUE, Long.MAX_VALUE, ACTIVE);
-        SeatState minTargetOverflow = new SeatState(
-                playerId(), 0, Long.MAX_VALUE, 0, 0, ACTIVE);
 
         assertThatThrownBy(() -> LegalActions.calculate(
                         maxTargetOverflow, Long.MAX_VALUE, 1, true))
                 .isInstanceOf(ArithmeticException.class);
-        assertThatThrownBy(() -> LegalActions.calculate(
-                        minTargetOverflow, Long.MAX_VALUE, 1, true))
-                .isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void unrepresentableFullRaiseMinimumKeepsPassiveActionsAndAllInAvailable() {
+        SeatState actor = seat(0, Long.MAX_VALUE, 0, ACTIVE);
+
+        LegalActions legal = LegalActions.calculate(actor, Long.MAX_VALUE, 1, true);
+
+        assertThat(legal.types()).containsExactlyInAnyOrder(FOLD, CALL, ALL_IN);
+        assertThat(legal.callAmount()).isEqualTo(Long.MAX_VALUE);
+        assertThat(legal.minRaiseTo()).isEmpty();
+        assertThat(legal.maxRaiseTo()).isEqualTo(Long.MAX_VALUE);
     }
 
     @Test

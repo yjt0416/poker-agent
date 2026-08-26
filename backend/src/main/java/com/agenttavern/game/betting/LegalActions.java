@@ -80,14 +80,22 @@ public record LegalActions(
         if (actor.stack() > 0) {
             types.add(ActionType.ALL_IN);
         }
-        long minimum = currentBet == 0
-                ? lastFullRaiseSize
-                : Math.addExact(currentBet, lastFullRaiseSize);
         OptionalLong minRaiseTo = OptionalLong.empty();
-        if (raiseRightsOpen && maxRaiseTo >= minimum) {
+        OptionalLong minimum = fullRaiseMinimum(currentBet, lastFullRaiseSize);
+        if (raiseRightsOpen && minimum.isPresent() && maxRaiseTo >= minimum.getAsLong()) {
             types.add(ActionType.RAISE);
-            minRaiseTo = OptionalLong.of(minimum);
+            minRaiseTo = minimum;
         }
         return new LegalActions(types, callAmount, minRaiseTo, maxRaiseTo);
+    }
+
+    private static OptionalLong fullRaiseMinimum(long currentBet, long lastFullRaiseSize) {
+        if (currentBet == 0) {
+            return OptionalLong.of(lastFullRaiseSize);
+        }
+        if (currentBet > Long.MAX_VALUE - lastFullRaiseSize) {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(currentBet + lastFullRaiseSize);
     }
 }

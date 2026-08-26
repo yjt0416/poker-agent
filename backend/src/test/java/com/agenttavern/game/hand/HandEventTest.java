@@ -51,12 +51,64 @@ class HandEventTest {
         assertThatThrownBy(() -> new HandEvent.PotsAwarded(
                         handId, List.of(pot), Map.of(first, 9L)))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new HandEvent.PotsAwarded(
+                        handId,
+                        List.of(new Pot(100, Set.of(first)), new Pot(100, Set.of(second))),
+                        Map.of(first, 200L)))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new HandEvent.HandCompleted(
                         handId,
                         List.of(
                                 new SeatState(first, 0, 99, 0, 1, ACTIVE),
                                 new SeatState(second, 1, 100, 0, 0, ACTIVE))))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsPayoutsThatCannotFitTheJointCapacityOfTheirEligiblePots() {
+        HandId handId = hand(2);
+        PlayerId first = player(1);
+        PlayerId second = player(2);
+        PlayerId third = player(3);
+
+        assertThatThrownBy(() -> new HandEvent.PotsAwarded(
+                        handId,
+                        List.of(
+                                new Pot(100, Set.of(first, second)),
+                                new Pot(100, Set.of(first, second)),
+                                new Pot(100, Set.of(third))),
+                        Map.of(first, 150L, second, 150L)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rejectsPotsAwardedAcrossMoreThanSixEligiblePlayers() {
+        List<PlayerId> players = java.util.stream.LongStream.rangeClosed(1, 7)
+                .mapToObj(HandEventTest::player)
+                .toList();
+
+        assertThatThrownBy(() -> new HandEvent.PotsAwarded(
+                        hand(3),
+                        List.of(
+                                new Pot(60, Set.copyOf(players.subList(0, 6))),
+                                new Pot(10, Set.of(players.get(6)))),
+                        Map.of(players.get(0), 60L, players.get(6), 10L)))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void potsAwardedKeepsNestedEligibilityInPlayerIdOrder() {
+        PlayerId first = player(30);
+        PlayerId second = player(10);
+        PlayerId third = player(20);
+
+        HandEvent.PotsAwarded awarded = new HandEvent.PotsAwarded(
+                hand(4),
+                List.of(new Pot(60, Set.of(first, second, third))),
+                Map.of(second, 60L));
+
+        assertThat(awarded.pots().getFirst().eligiblePlayers())
+                .containsExactly(second, third, first);
     }
 
     @Test

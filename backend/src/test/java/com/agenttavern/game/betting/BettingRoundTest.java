@@ -354,7 +354,7 @@ class BettingRoundTest {
     }
 
     @Test
-    void exactLongMaximumAllInRaiseDoesNotWrapAndSubsequentOverflowIsRejected() {
+    void exactLongMaximumAllInRaiseDoesNotWrapAndAllowsItsFinalCall() {
         BettingRound round = round(
                 0,
                 1,
@@ -379,10 +379,10 @@ class BettingRoundTest {
         assertThat(atMaximum.lastFullRaiseSize()).isEqualTo(1);
         assertThat(atMaximum.actor().seatIndex()).isEqualTo(1);
 
-        assertThatThrownBy(() -> atMaximum.apply(PlayerAction.call()))
-                .isInstanceOf(ArithmeticException.class);
-        assertThat(atMaximum.actor().seatIndex()).isEqualTo(1);
-        assertThat(atMaximum.seats().get(1).streetCommitted()).isEqualTo(Long.MAX_VALUE - 1);
+        BettingRound complete = atMaximum.apply(PlayerAction.call());
+
+        assertThat(complete.isComplete()).isTrue();
+        assertThat(complete.seats().get(1).streetCommitted()).isEqualTo(Long.MAX_VALUE);
     }
 
     private static BettingRound preflopRoundWithBlinds(long smallBlind, long bigBlind) {

@@ -409,7 +409,7 @@ public final class Hand {
         hand.seats.forEach(seat -> playerSeats.put(seat.playerId(), seat.seatIndex()));
         Map<PlayerId, Long> payouts = ShowdownResolver.resolve(
                 pots, hand.holeCards, hand.board, playerSeats, hand.buttonSeat);
-        return settle(hand, pots, payouts, precedingEvents);
+        return settle(hand, pots, payouts, Street.SHOWDOWN, precedingEvents);
     }
 
     private static HandTransition settleUncontested(
@@ -422,13 +422,14 @@ public final class Hand {
                 .orElseThrow()
                 .playerId();
         long totalPot = pots.stream().mapToLong(Pot::amount).reduce(0, Math::addExact);
-        return settle(hand, pots, Map.of(winner, totalPot), precedingEvents);
+        return settle(hand, pots, Map.of(winner, totalPot), hand.street, precedingEvents);
     }
 
     private static HandTransition settle(
             Hand hand,
             List<Pot> pots,
             Map<PlayerId, Long> payouts,
+            Street terminalStreet,
             List<HandEvent> precedingEvents) {
         Map<PlayerId, Long> orderedPayouts = new LinkedHashMap<>();
         hand.seats.stream()
@@ -449,7 +450,7 @@ public final class Hand {
                 hand.board,
                 hand.burnedCards,
                 null,
-                Street.SHOWDOWN,
+                terminalStreet,
                 true,
                 hand.initialTotalChips);
         completedHand.totalChipsInSystem();
