@@ -21,13 +21,16 @@ import com.agenttavern.game.hand.PlayerStack;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.random.RandomGenerator;
 import java.util.random.RandomGeneratorFactory;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
+import net.jqwik.api.Example;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.Provide;
@@ -57,6 +60,8 @@ class HandInvariantProperties {
         Hand finalHand = run.transitions().getLast().hand();
         List<Card> exposedCards = exposedCardsFrom(finalHand);
 
+        assertCompleteRunoutExposesEveryPlayableCard(
+                scenario.players().size(), eventCards, exposedCards);
         assertThat(new HashSet<>(eventCards))
                 .as("event cards for scenario seed=%s", scenario.seed())
                 .hasSize(eventCards.size());
@@ -64,6 +69,31 @@ class HandInvariantProperties {
                 .as("board and hole cards for scenario seed=%s", scenario.seed())
                 .hasSize(exposedCards.size());
         assertThat(exposedCards).containsExactlyInAnyOrderElementsOf(eventCards);
+    }
+
+    @Example
+    void fullRunoutPopulationRejectsEmptyObservableCardSources() {
+        assertThatThrownBy(() -> assertCompleteRunoutExposesEveryPlayableCard(
+                2, List.<Card>of(), List.<Card>of())).isInstanceOf(AssertionError.class);
+    }
+
+    @Example
+    void hardActionLimitRejectsTheFiveHundredthAction() {
+        assertThatThrownBy(() -> assertActionCountIsWithinHardLimit(MAX_ACTIONS, "example"))
+                .isInstanceOf(AssertionError.class);
+    }
+
+    @Example
+    void publicStateComparisonRejectsChangedHoleCards() {
+        PublicHandState original = PublicHandState.capture(
+                HandScenario.fromSeed(17).startTransition().hand());
+        PlayerId firstPlayer = original.seats().getFirst().playerId();
+        PlayerId secondPlayer = original.seats().get(1).playerId();
+        Map<PlayerId, List<Card>> changedHoleCards = new LinkedHashMap<>(original.holeCards());
+        changedHoleCards.put(firstPlayer, original.holeCards().get(secondPlayer));
+
+        assertThatThrownBy(() -> assertPublicHandStateUnchanged(
+                original, original.withHoleCards(changedHoleCards))).isInstanceOf(AssertionError.class);
     }
 
     @Property(tries = 500, seed = "2026082810")
@@ -122,8 +152,10 @@ class HandInvariantProperties {
 
         assertThat(passive.transitions().getLast().hand().isComplete()).isTrue();
         assertThat(aggressive.transitions().getLast().hand().isComplete()).isTrue();
-        assertThat(passive.actionCount()).isLessThanOrEqualTo(MAX_ACTIONS);
-        assertThat(aggressive.actionCount()).isLessThanOrEqualTo(MAX_ACTIONS);
+        assertActionCountIsWithinHardLimit(
+                passive.actionCount(), "passive scenario seed=" + scenario.seed());
+        assertActionCountIsWithinHardLimit(
+                aggressive.actionCount(), "aggressive scenario seed=" + scenario.seed());
     }
 
     @Provide
@@ -144,15 +176,15 @@ class HandInvariantProperties {
         int actions = 0;
 
         while (!hand.isComplete()) {
-            assertThat(actions)
-                    .as(
-                            "action cap for scenario seed=%s, street=%s, actor=%s, legal=%s, seats=%s",
-                            scenario.seed(),
-                            hand.street(),
-                            hand.actor(),
-                            hand.legalActions(),
-                            hand.seats())
-                    .isLessThan(MAX_ACTIONS);
+            assertActionCountIsWithinHardLimit(
+                    actions + 1,
+                    "next action for scenario seed=%s, street=%s, actor=%s, legal=%s, seats=%s"
+                            .formatted(
+                                    scenario.seed(),
+                                    hand.street(),
+                                    hand.actor(),
+                                    hand.legalActions(),
+                                    hand.seats()));
             assertThat(hand.actor()).isNotNull();
             PlayerAction action = policy.apply(hand.legalActions());
             transition = hand.act(hand.actor().playerId(), action);
@@ -176,6 +208,17 @@ class HandInvariantProperties {
         return cards;
     }
 
+    private static void assertCompleteRunoutExposesEveryPlayableCard(
+            int playerCount, List<Card> eventCards, List<Card> exposedCards) {
+        int expectedCards = Math.addExact(Math.multiplyExact(playerCount, 2), 5);
+        assertThat(eventCards).isNotEmpty().hasSize(expectedCards);
+        assertThat(exposedCards).isNotEmpty().hasSize(expectedCards);
+    }
+
+    private static void assertActionCountIsWithinHardLimit(int actionCount, String description) {
+        assertThat(actionCount).as(description).isLessThan(MAX_ACTIONS);
+    }
+
     private static List<Card> exposedCardsFrom(Hand hand) {
         List<Card> cards = new ArrayList<>(hand.board());
         hand.seats().forEach(seat -> cards.addAll(hand.holeCards(seat.playerId())));
@@ -190,9 +233,15 @@ class HandInvariantProperties {
                 .isInstanceOf(IllegalActionException.class);
 
         PublicHandState after = PublicHandState.capture(hand);
+        assertPublicHandStateUnchanged(before, after);
+    }
+
+    private static void assertPublicHandStateUnchanged(
+            PublicHandState before, PublicHandState after) {
         assertThat(after.totalChips()).isEqualTo(before.totalChips());
         assertThat(after.board()).containsExactlyElementsOf(before.board());
         assertThat(after.seats()).containsExactlyElementsOf(before.seats());
+        assertThat(after.holeCards()).isEqualTo(before.holeCards());
         assertThat(after.actor()).isEqualTo(before.actor());
         assertThat(after.legalActions()).isEqualTo(before.legalActions());
         assertThat(after.street()).isEqualTo(before.street());
@@ -211,20 +260,50 @@ class HandInvariantProperties {
             long totalChips,
             List<Card> board,
             List<SeatState> seats,
+            Map<PlayerId, List<Card>> holeCards,
             SeatState actor,
             LegalActions legalActions,
             Street street,
             boolean complete) {
 
+        private PublicHandState {
+            board = List.copyOf(board);
+            seats = List.copyOf(seats);
+            holeCards = deeplyImmutableHoleCards(holeCards);
+        }
+
         static PublicHandState capture(Hand hand) {
+            Map<PlayerId, List<Card>> holeCards = new LinkedHashMap<>();
+            hand.seats().forEach(seat -> holeCards.put(
+                    seat.playerId(), List.copyOf(hand.holeCards(seat.playerId()))));
             return new PublicHandState(
                     hand.totalChipsInSystem(),
-                    List.copyOf(hand.board()),
-                    List.copyOf(hand.seats()),
+                    hand.board(),
+                    hand.seats(),
+                    holeCards,
                     hand.actor(),
                     hand.legalActions(),
                     hand.street(),
                     hand.isComplete());
+        }
+
+        PublicHandState withHoleCards(Map<PlayerId, List<Card>> changedHoleCards) {
+            return new PublicHandState(
+                    totalChips,
+                    board,
+                    seats,
+                    changedHoleCards,
+                    actor,
+                    legalActions,
+                    street,
+                    complete);
+        }
+
+        private static Map<PlayerId, List<Card>> deeplyImmutableHoleCards(
+                Map<PlayerId, List<Card>> source) {
+            Map<PlayerId, List<Card>> copy = new LinkedHashMap<>();
+            source.forEach((playerId, cards) -> copy.put(playerId, List.copyOf(cards)));
+            return Collections.unmodifiableMap(copy);
         }
     }
 
