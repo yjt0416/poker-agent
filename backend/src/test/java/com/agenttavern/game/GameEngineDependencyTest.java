@@ -5,11 +5,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.agenttavern.game.betting.ActionType;
+import com.agenttavern.game.betting.BettingRoundCheckpoint;
 import com.agenttavern.game.betting.LegalActions;
 import com.agenttavern.game.betting.PlayerId;
 import com.agenttavern.game.betting.SeatState;
 import com.agenttavern.game.card.Deck;
+import com.agenttavern.game.card.DeckCheckpoint;
 import com.agenttavern.game.hand.BlindLevel;
+import com.agenttavern.game.hand.HandCheckpoint;
 import com.agenttavern.game.hand.HandEvent;
 import com.agenttavern.game.hand.HandId;
 import com.agenttavern.game.hand.HandTransition;
@@ -85,6 +88,9 @@ class GameEngineDependencyTest {
                         HandEvent.CommunityCardsDealt.class,
                         HandEvent.PotsAwarded.class,
                         HandEvent.HandCompleted.class,
+                        DeckCheckpoint.class,
+                        BettingRoundCheckpoint.class,
+                        HandCheckpoint.class,
                         Pot.class,
                         HandValue.class);
 

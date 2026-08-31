@@ -23,6 +23,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.Set;
 
@@ -234,6 +235,44 @@ public final class Hand {
         return complete;
     }
 
+    public HandCheckpoint checkpoint() {
+        return new HandCheckpoint(
+                id,
+                buttonSeat,
+                blinds,
+                deck.checkpoint(),
+                seats,
+                holeCards,
+                board,
+                burnedCards,
+                Optional.ofNullable(bettingRound).map(BettingRound::checkpoint),
+                street,
+                complete,
+                initialTotalChips);
+    }
+
+    public static Hand restore(HandCheckpoint checkpoint) {
+        requireNonNull(checkpoint, "checkpoint");
+        Deck restoredDeck = Deck.restore(checkpoint.deck());
+        BettingRound restoredRound = checkpoint.bettingRound()
+                .map(BettingRound::restore)
+                .orElse(null);
+        validateCheckpoint(checkpoint, restoredDeck, restoredRound);
+        return new Hand(
+                checkpoint.id(),
+                checkpoint.buttonSeat(),
+                checkpoint.blinds(),
+                restoredDeck,
+                checkpoint.seats(),
+                checkpoint.holeCards(),
+                checkpoint.board(),
+                checkpoint.burnedCards(),
+                restoredRound,
+                checkpoint.street(),
+                checkpoint.complete(),
+                checkpoint.initialTotalChips());
+    }
+
     public long totalChipsInSystem() {
         long total = seats.stream()
                 .mapToLong(seat -> Math.addExact(seat.stack(), seat.handCommitted()))
@@ -265,6 +304,119 @@ public final class Hand {
         int requiredCards = Math.addExact(Math.multiplyExact(players.size(), 2), COMMUNITY_AND_BURN_CARDS);
         if (deck.remaining() < requiredCards) {
             throw new IllegalArgumentException("deck does not contain enough cards for the hand");
+        }
+    }
+
+    private static void validateCheckpoint(
+            HandCheckpoint checkpoint, Deck restoredDeck, BettingRound restoredRound) {
+        List<SeatState> checkpointSeats = checkpoint.seats();
+        validateCheckpointSeats(checkpointSeats, checkpoint.buttonSeat());
+        validateHoleCards(checkpoint.holeCards(), checkpointSeats);
+        validateCardUniqueness(checkpoint, restoredDeck);
+        validateStreetCards(checkpoint.street(), checkpoint.board(), checkpoint.burnedCards());
+        validateChipConservation(checkpointSeats, checkpoint.initialTotalChips());
+
+        if (checkpoint.complete() && checkpoint.bettingRound().isPresent()) {
+            throw new IllegalArgumentException("completed hand cannot retain a betting round");
+        }
+        if (restoredRound != null) {
+            if (restoredRound.isComplete()) {
+                throw new IllegalArgumentException("checkpoint betting round must have an active actor");
+            }
+            if (restoredRound.street() != checkpoint.street()) {
+                throw new IllegalArgumentException("betting round street must match the hand street");
+            }
+            if (!restoredRound.seats().equals(checkpointSeats)) {
+                throw new IllegalArgumentException("betting round seats must match hand seats");
+            }
+        } else if (checkpoint.complete()) {
+            for (SeatState seat : checkpointSeats) {
+                if (seat.streetCommitted() != 0 || seat.handCommitted() != 0) {
+                    throw new IllegalArgumentException("completed hand cannot retain committed chips");
+                }
+            }
+        }
+    }
+
+    private static void validateCheckpointSeats(List<SeatState> seats, int buttonSeat) {
+        if (seats.size() < 2 || seats.size() > TABLE_SIZE) {
+            throw new IllegalArgumentException("a hand requires two to six seats");
+        }
+        Set<PlayerId> playerIds = new HashSet<>();
+        Set<Integer> seatIndexes = new HashSet<>();
+        for (SeatState seat : seats) {
+            if (!playerIds.add(seat.playerId())) {
+                throw new IllegalArgumentException("player IDs must be unique");
+            }
+            if (!seatIndexes.add(seat.seatIndex())) {
+                throw new IllegalArgumentException("seat indexes must be unique");
+            }
+        }
+        if (!seatIndexes.contains(buttonSeat)) {
+            throw new IllegalArgumentException("button seat must be occupied");
+        }
+    }
+
+    private static void validateHoleCards(
+            Map<PlayerId, List<Card>> holeCards, List<SeatState> seats) {
+        Set<PlayerId> seatIds = new HashSet<>();
+        seats.forEach(seat -> seatIds.add(seat.playerId()));
+        if (!holeCards.keySet().equals(seatIds)) {
+            throw new IllegalArgumentException("hole cards must be assigned to every seat");
+        }
+        for (List<Card> cards : holeCards.values()) {
+            if (cards.size() != 2) {
+                throw new IllegalArgumentException("each seat must have exactly two hole cards");
+            }
+        }
+    }
+
+    private static void validateCardUniqueness(HandCheckpoint checkpoint, Deck restoredDeck) {
+        Set<Card> physicalCards = new HashSet<>();
+        addUniqueCards(physicalCards, restoredDeck.checkpoint().remainingCards());
+        checkpoint.holeCards().values().forEach(cards -> addUniqueCards(physicalCards, cards));
+        addUniqueCards(physicalCards, checkpoint.board());
+        addUniqueCards(physicalCards, checkpoint.burnedCards());
+    }
+
+    private static void addUniqueCards(Set<Card> physicalCards, List<Card> cards) {
+        for (Card card : cards) {
+            if (!physicalCards.add(card)) {
+                throw new IllegalArgumentException("duplicate physical card in hand checkpoint: " + card);
+            }
+        }
+    }
+
+    private static void validateStreetCards(
+            Street street, List<Card> board, List<Card> burnedCards) {
+        int expectedBoardSize = switch (street) {
+            case PREFLOP -> 0;
+            case FLOP -> 3;
+            case TURN -> 4;
+            case RIVER, SHOWDOWN -> 5;
+        };
+        int expectedBurnedSize = switch (street) {
+            case PREFLOP -> 0;
+            case FLOP -> 1;
+            case TURN -> 2;
+            case RIVER, SHOWDOWN -> 3;
+        };
+        if (board.size() != expectedBoardSize || burnedCards.size() != expectedBurnedSize) {
+            throw new IllegalArgumentException("board and burned cards must match the hand street");
+        }
+    }
+
+    private static void validateChipConservation(List<SeatState> seats, long initialTotalChips) {
+        final long actualTotal;
+        try {
+            actualTotal = seats.stream()
+                    .mapToLong(seat -> Math.addExact(seat.stack(), seat.handCommitted()))
+                    .reduce(0, Math::addExact);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("hand must conserve its initial chips", exception);
+        }
+        if (actualTotal != initialTotalChips) {
+            throw new IllegalArgumentException("hand must conserve its initial chips");
         }
     }
 

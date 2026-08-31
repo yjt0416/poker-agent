@@ -61,5 +61,14 @@ public final class Deck {
         return cards.size();
     }
 
+    public DeckCheckpoint checkpoint() {
+        return new DeckCheckpoint(cards);
+    }
+
+    public static Deck restore(DeckCheckpoint checkpoint) {
+        Objects.requireNonNull(checkpoint, "checkpoint");
+        return ordered(checkpoint.remainingCards());
+    }
+
     public record Draw(Card card, Deck deck) {}
 }

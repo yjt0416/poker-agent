@@ -50,16 +50,7 @@ public final class BettingRound {
             throw new IllegalArgumentException("lastFullRaiseSize must be positive");
         }
 
-        Set<Integer> seatIndexes = new HashSet<>();
-        Set<PlayerId> playerIds = new HashSet<>();
-        for (SeatState seat : copiedSeats) {
-            if (!seatIndexes.add(seat.seatIndex())) {
-                throw new IllegalArgumentException("seat indexes must be unique");
-            }
-            if (!playerIds.add(seat.playerId())) {
-                throw new IllegalArgumentException("player IDs must be unique");
-            }
-        }
+        validateSeats(copiedSeats);
         SeatState firstActor = copiedSeats.stream()
                 .filter(seat -> seat.seatIndex() == firstToActSeat)
                 .findFirst()
@@ -137,6 +128,60 @@ public final class BettingRound {
 
     public Street street() {
         return street;
+    }
+
+    public BettingRoundCheckpoint checkpoint() {
+        return new BettingRoundCheckpoint(
+                seats,
+                street,
+                currentBet,
+                lastFullRaiseSize,
+                pendingAction,
+                raiseRights,
+                actorId);
+    }
+
+    public static BettingRound restore(BettingRoundCheckpoint checkpoint) {
+        requireNonNull(checkpoint, "checkpoint");
+        List<SeatState> restoredSeats = checkpoint.seats();
+        validateSeats(restoredSeats);
+        if (checkpoint.currentBet() < 0) {
+            throw new IllegalArgumentException("currentBet must be non-negative");
+        }
+        if (checkpoint.lastFullRaiseSize() <= 0) {
+            throw new IllegalArgumentException("lastFullRaiseSize must be positive");
+        }
+        long largestCommitment = restoredSeats.stream()
+                .mapToLong(SeatState::streetCommitted)
+                .max()
+                .orElse(0);
+        if (checkpoint.currentBet() != largestCommitment) {
+            throw new IllegalArgumentException("currentBet must equal the largest street commitment");
+        }
+
+        Set<PlayerId> activePlayers = activePlayers(restoredSeats);
+        if (!activePlayers.containsAll(checkpoint.pendingAction())) {
+            throw new IllegalArgumentException("pending action must contain only active players");
+        }
+        if (!checkpoint.pendingAction().containsAll(checkpoint.raiseRights())) {
+            throw new IllegalArgumentException("raise rights must belong to pending players");
+        }
+        if (checkpoint.actorId() == null) {
+            if (!checkpoint.pendingAction().isEmpty() || !checkpoint.raiseRights().isEmpty()) {
+                throw new IllegalArgumentException("completed betting round cannot retain pending action");
+            }
+        } else if (!checkpoint.pendingAction().contains(checkpoint.actorId())
+                || !activePlayers.contains(checkpoint.actorId())) {
+            throw new IllegalArgumentException("actor must be an active pending player");
+        }
+        return new BettingRound(
+                restoredSeats,
+                checkpoint.street(),
+                checkpoint.currentBet(),
+                checkpoint.lastFullRaiseSize(),
+                checkpoint.pendingAction(),
+                checkpoint.raiseRights(),
+                checkpoint.actorId());
     }
 
     private BettingRound completePassiveAction(SeatState actor, SeatState updatedActor) {
@@ -283,6 +328,22 @@ public final class BettingRound {
             }
         }
         return players;
+    }
+
+    private static void validateSeats(List<SeatState> seats) {
+        if (seats.size() < 2 || seats.size() > TABLE_SIZE) {
+            throw new IllegalArgumentException("a betting round requires two to six seats");
+        }
+        Set<Integer> seatIndexes = new HashSet<>();
+        Set<PlayerId> playerIds = new HashSet<>();
+        for (SeatState seat : seats) {
+            if (!seatIndexes.add(seat.seatIndex())) {
+                throw new IllegalArgumentException("seat indexes must be unique");
+            }
+            if (!playerIds.add(seat.playerId())) {
+                throw new IllegalArgumentException("player IDs must be unique");
+            }
+        }
     }
 
     private List<SeatState> replaceSeat(SeatState replacement) {
