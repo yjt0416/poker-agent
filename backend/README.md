@@ -27,8 +27,9 @@ Unix or CI equivalent:
 ./backend/mvnw -f backend/pom.xml clean verify
 ```
 
-The property suite fixes its jqwik seeds and creates each scenario from a
-recorded scenario seed, so a reported sample can be reproduced exactly.
+The invariant suite uses deterministic JUnit Jupiter property-style checks.
+Each of its six checks executes 500 fixed, distinct scenario seeds; any failure
+reports the reproducing seed. These checks do not perform shrinking.
 
 ## Action amounts and betting rights
 

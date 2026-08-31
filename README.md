@@ -10,6 +10,9 @@ pots, and invariant/architecture verification. This does not claim that a
 complete product or frontend is implemented. See the [backend poker engine guide](backend/README.md)
 for public semantics and deterministic test setup.
 
+The engine's invariant suite uses deterministic JUnit Jupiter property-style
+checks, with fixed reproducible scenario seeds rather than jqwik shrinking.
+
 ## Prerequisite
 
 Install Java 21.
