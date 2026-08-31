@@ -1,10 +1,12 @@
 package com.agenttavern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.groups.Tuple.tuple;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.modulith.core.ApplicationModule;
 import org.springframework.modulith.core.ApplicationModules;
+import org.springframework.modulith.core.NamedInterface;
 
 class ArchitectureTest {
 
@@ -16,12 +18,25 @@ class ArchitectureTest {
     @Test
     void applicationModulesDeclareTournamentAndPersistenceBoundaries() {
         ApplicationModules modules = ApplicationModules.of(AgentTavernApplication.class);
+        ApplicationModule game = moduleNamed(modules, "game");
+        ApplicationModule tournament = moduleNamed(modules, "tournament");
 
         assertThat(modules.stream().map(ApplicationModule::getIdentifier))
                 .extracting(Object::toString)
                 .containsExactlyInAnyOrder("game", "tournament", "persistence");
-        assertThat(moduleNamed(modules, "tournament").getAllowedDependencies(modules).toString())
-                .isEqualTo("game");
+        assertThat(game.isOpen()).isFalse();
+        assertThat(game.getNamedInterfaces().stream()
+                .filter(NamedInterface::isNamed)
+                .map(NamedInterface::getName))
+                .containsExactlyInAnyOrder("betting", "card", "hand");
+        assertThat(tournament.getAllowedDependencies(modules).stream())
+                .extracting(
+                        dependency -> dependency.getTargetModule().getIdentifier().toString(),
+                        dependency -> dependency.getTargetNamedInterface().getName())
+                .containsExactlyInAnyOrder(
+                        tuple("game", "betting"),
+                        tuple("game", "card"),
+                        tuple("game", "hand"));
         assertThat(moduleNamed(modules, "persistence").getAllowedDependencies(modules).toString())
                 .isEqualTo("tournament, game");
     }

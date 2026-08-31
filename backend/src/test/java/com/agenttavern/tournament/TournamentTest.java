@@ -201,6 +201,33 @@ class TournamentTest {
     }
 
     @Test
+    void sameHandEliminationsGiveTheSmallerHandStartingStackTheWorsePosition() {
+        Tournament betweenHands = completeByFolding(Tournament.start(
+                        tournament(1), TournamentMode.PLAYER, sixEntrants(), 0, hand(1), Deck.standard())
+                .tournament()).tournament();
+        Tournament tournament = betweenHands.startNextHand(
+                        hand(2), deckWhereSeatThreeWinsWithButtonAtSeatOne())
+                .tournament();
+
+        tournament = actCurrent(tournament, PlayerAction.allIn(10_000));
+        tournament = actCurrent(tournament, PlayerAction.fold());
+        tournament = actCurrent(tournament, PlayerAction.fold());
+        tournament = actCurrent(tournament, PlayerAction.allIn(9_950));
+        tournament = actCurrent(tournament, PlayerAction.fold());
+        TournamentTransition completed = tournament.act(
+                tournament.currentHand().actor().playerId(), PlayerAction.call());
+
+        assertThat(seatAt(completed.tournament(), 1).finishPosition()).isEqualTo(6);
+        assertThat(seatAt(completed.tournament(), 4).finishPosition()).isEqualTo(5);
+        assertThat(completed.events())
+                .filteredOn(TournamentEvent.PlayerEliminated.class::isInstance)
+                .map(TournamentEvent.PlayerEliminated.class::cast)
+                .containsExactly(
+                        new TournamentEvent.PlayerEliminated(tournament(1), player(2), 6),
+                        new TournamentEvent.PlayerEliminated(tournament(1), player(5), 5));
+    }
+
+    @Test
     void lastFundedPlayerBecomesWinnerAndCompletedTournamentCannotStartAnotherHand() {
         Tournament tournament = Tournament.start(
                         tournament(1), TournamentMode.PLAYER, sixEntrants(), 0, hand(1), deckWhereBigBlindWins())
@@ -273,6 +300,10 @@ class TournamentTest {
                 card(FOUR, DIAMONDS), card(FIVE, DIAMONDS), card(EIGHT, HEARTS),
                 card(JACK, CLUBS), card(QUEEN, HEARTS), card(KING, HEARTS),
                 card(SEVEN, SPADES), card(NINE, DIAMONDS)));
+    }
+
+    private static Deck deckWhereSeatThreeWinsWithButtonAtSeatOne() {
+        return deckWhereBigBlindWins();
     }
 
     private static Card card(com.agenttavern.game.card.Rank rank, com.agenttavern.game.card.Suit suit) {

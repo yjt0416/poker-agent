@@ -1,4 +1,4 @@
 @org.springframework.modulith.ApplicationModule(
         displayName = "Tournament",
-        allowedDependencies = "game")
+        allowedDependencies = {"game::betting", "game::card", "game::hand"})
 package com.agenttavern.tournament;

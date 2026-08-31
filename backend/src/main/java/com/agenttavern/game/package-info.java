@@ -1,4 +1,2 @@
-@org.springframework.modulith.ApplicationModule(
-        displayName = "Game Engine",
-        type = org.springframework.modulith.ApplicationModule.Type.OPEN)
+@org.springframework.modulith.ApplicationModule(displayName = "Game Engine")
 package com.agenttavern.game;
