@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -383,6 +384,24 @@ class BettingRoundTest {
 
         assertThat(complete.isComplete()).isTrue();
         assertThat(complete.seats().get(1).streetCommitted()).isEqualTo(Long.MAX_VALUE);
+    }
+
+    @Test
+    void restoreRejectsInProgressRoundThatWouldAlreadyBeCompleteAfterFolds() {
+        SeatState actor = seat(0, 100, 0);
+        SeatState folded = statusSeat(1, 100, FOLDED);
+        BettingRoundCheckpoint checkpoint = new BettingRoundCheckpoint(
+                List.of(actor, folded),
+                Street.PREFLOP,
+                0,
+                100,
+                Set.of(actor.playerId()),
+                Set.of(actor.playerId()),
+                actor.playerId());
+
+        assertThatThrownBy(() -> BettingRound.restore(checkpoint))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("complete");
     }
 
     private static BettingRound preflopRoundWithBlinds(long smallBlind, long bigBlind) {

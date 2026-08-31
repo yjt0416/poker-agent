@@ -174,6 +174,10 @@ public final class BettingRound {
                 || !activePlayers.contains(checkpoint.actorId())) {
             throw new IllegalArgumentException("actor must be an active pending player");
         }
+        if (completesImmediately(restoredSeats, checkpoint.pendingAction())
+                && checkpoint.actorId() != null) {
+            throw new IllegalArgumentException("betting round would already be complete");
+        }
         return new BettingRound(
                 restoredSeats,
                 checkpoint.street(),
@@ -280,12 +284,7 @@ public final class BettingRound {
             Set<PlayerId> pendingAction,
             Set<PlayerId> raiseRights,
             PlayerId proposedActor) {
-        boolean onePlayerRemains = seats.stream()
-                .filter(seat -> seat.status() != PlayerStatus.FOLDED)
-                .filter(seat -> seat.status() != PlayerStatus.OUT)
-                .limit(2)
-                .count() <= 1;
-        if (onePlayerRemains || pendingAction.isEmpty()) {
+        if (completesImmediately(seats, pendingAction)) {
             return new BettingRound(
                     seats, street, currentBet, lastFullRaiseSize, Set.of(), Set.of(), null);
         }
@@ -328,6 +327,15 @@ public final class BettingRound {
             }
         }
         return players;
+    }
+
+    private static boolean completesImmediately(List<SeatState> seats, Set<PlayerId> pendingAction) {
+        long nonFoldedPlayers = seats.stream()
+                .filter(seat -> seat.status() != PlayerStatus.FOLDED)
+                .filter(seat -> seat.status() != PlayerStatus.OUT)
+                .limit(2)
+                .count();
+        return nonFoldedPlayers <= 1 || pendingAction.isEmpty();
     }
 
     private static void validateSeats(List<SeatState> seats) {

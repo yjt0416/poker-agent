@@ -92,6 +92,59 @@ class HandCheckpointTest {
         assertChipMismatchRejected();
     }
 
+    @Test
+    void restoreRejectsIncompleteHandWithoutBettingRound() {
+        HandCheckpoint source = handAfterPreflopRaiseAndCall().checkpoint();
+        HandCheckpoint invalid = checkpointWith(
+                source, source.deck(), source.seats(), java.util.Optional.empty());
+
+        assertThatThrownBy(() -> Hand.restore(invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("incomplete");
+    }
+
+    @Test
+    void restoreRejectsIncompleteShowdownHand() {
+        HandCheckpoint source = completedShowdownHand().checkpoint();
+        HandCheckpoint invalid = new HandCheckpoint(
+                source.id(),
+                source.buttonSeat(),
+                source.blinds(),
+                source.deck(),
+                source.seats(),
+                source.holeCards(),
+                source.board(),
+                source.burnedCards(),
+                java.util.Optional.empty(),
+                com.agenttavern.game.betting.Street.SHOWDOWN,
+                false,
+                source.initialTotalChips());
+
+        assertThatThrownBy(() -> Hand.restore(invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("showdown");
+    }
+
+    @Test
+    void restoreRejectsIncompleteHandWithNoPendingBettingActor() {
+        HandCheckpoint source = handAfterPreflopRaiseAndCall().checkpoint();
+        BettingRoundCheckpoint round = source.bettingRound().orElseThrow();
+        BettingRoundCheckpoint completedRound = new BettingRoundCheckpoint(
+                round.seats(),
+                round.street(),
+                round.currentBet(),
+                round.lastFullRaiseSize(),
+                Set.of(),
+                Set.of(),
+                null);
+        HandCheckpoint invalid = checkpointWith(
+                source, source.deck(), source.seats(), java.util.Optional.of(completedRound));
+
+        assertThatThrownBy(() -> Hand.restore(invalid))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("incomplete");
+    }
+
     private static void assertDeckOrderAfterRestore() {
         Hand original = handAfterPreflopRaiseAndCall();
         Hand restored = Hand.restore(original.checkpoint());
@@ -116,19 +169,23 @@ class HandCheckpointTest {
     }
 
     private static void assertCompletedRoundTrip() {
-        Hand completed = Hand.start(
-                        hand(20),
-                        List.of(player(21, 0, 50), player(22, 1, 100)),
-                        0,
-                        BLINDS,
-                        Deck.ordered(fixedCardsForHeadsUp()))
-                .hand();
+        Hand completed = completedShowdownHand();
 
         Hand restored = Hand.restore(completed.checkpoint());
 
         assertThat(restored.checkpoint()).isEqualTo(completed.checkpoint());
         assertThat(restored.isComplete()).isTrue();
         assertThat(restored.actor()).isNull();
+    }
+
+    private static Hand completedShowdownHand() {
+        return Hand.start(
+                        hand(20),
+                        List.of(player(21, 0, 50), player(22, 1, 100)),
+                        0,
+                        BLINDS,
+                        Deck.ordered(fixedCardsForHeadsUp()))
+                .hand();
     }
 
     private static void assertDeeplyImmutable() {

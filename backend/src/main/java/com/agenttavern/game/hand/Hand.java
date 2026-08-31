@@ -316,25 +316,28 @@ public final class Hand {
         validateStreetCards(checkpoint.street(), checkpoint.board(), checkpoint.burnedCards());
         validateChipConservation(checkpointSeats, checkpoint.initialTotalChips());
 
-        if (checkpoint.complete() && checkpoint.bettingRound().isPresent()) {
-            throw new IllegalArgumentException("completed hand cannot retain a betting round");
-        }
-        if (restoredRound != null) {
-            if (restoredRound.isComplete()) {
-                throw new IllegalArgumentException("checkpoint betting round must have an active actor");
+        if (checkpoint.complete()) {
+            if (checkpoint.bettingRound().isPresent()) {
+                throw new IllegalArgumentException("completed hand cannot retain a betting round");
             }
-            if (restoredRound.street() != checkpoint.street()) {
-                throw new IllegalArgumentException("betting round street must match the hand street");
-            }
-            if (!restoredRound.seats().equals(checkpointSeats)) {
-                throw new IllegalArgumentException("betting round seats must match hand seats");
-            }
-        } else if (checkpoint.complete()) {
             for (SeatState seat : checkpointSeats) {
                 if (seat.streetCommitted() != 0 || seat.handCommitted() != 0) {
                     throw new IllegalArgumentException("completed hand cannot retain committed chips");
                 }
             }
+            return;
+        }
+        if (checkpoint.street() == Street.SHOWDOWN) {
+            throw new IllegalArgumentException("incomplete hand cannot be at showdown");
+        }
+        if (restoredRound == null || restoredRound.isComplete()) {
+            throw new IllegalArgumentException("incomplete hand must retain an active betting round");
+        }
+        if (restoredRound.street() != checkpoint.street()) {
+            throw new IllegalArgumentException("betting round street must match the hand street");
+        }
+        if (!restoredRound.seats().equals(checkpointSeats)) {
+            throw new IllegalArgumentException("betting round seats must match hand seats");
         }
     }
 
