@@ -1,76 +1,61 @@
-# Poker Engine Guide
+# 德州扑克引擎指南
 
-This module is the implemented Phase 1 vertical slice: a deterministic,
-in-memory Texas Hold'em engine with betting, showdown, events, and quality
-guards. It is not a complete product and does not provide a browser frontend,
-database, HTTP API, or agent/LLM integration.
+本模块是 Agent Tavern 第一阶段已经完成的垂直切片：一个确定性的内存德州扑克引擎，包含下注、摊牌、领域事件和质量守卫。
 
-## Verification
+它还不是完整游戏产品，暂不提供浏览器前端、数据库、HTTP API 或 Agent/LLM 集成。
 
-Run these commands from the repository root with Java 21 selected.
+## 验证方式
 
-Focused engine invariants and architecture guards on Windows:
+请先选择 Java 21，然后在仓库根目录执行以下命令。
+
+Windows 下只运行引擎性质校验与架构守卫：
 
 ```powershell
 backend\mvnw.cmd -f backend\pom.xml -Dtest="HandInvariantProperties,GameEngineDependencyTest" test
 ```
 
-The complete clean Phase 1 verification on Windows:
+Windows 下执行第一阶段完整干净验证：
 
 ```powershell
 backend\mvnw.cmd -f backend\pom.xml clean verify
 ```
 
-Unix or CI equivalent:
+Unix 或 CI 的等价命令：
 
 ```sh
 ./backend/mvnw -f backend/pom.xml clean verify
 ```
 
-The invariant suite uses deterministic JUnit Jupiter property-style checks.
-Each of its six checks executes 500 fixed, distinct scenario seeds; any failure
-reports the reproducing seed. These checks do not perform shrinking.
+性质校验由 JUnit Jupiter 确定性执行。六项校验分别运行 500 个固定且互不相同的场景种子；一旦失败，错误信息会包含可复现该问题的种子。当前测试框架不提供自动收缩。
 
-## Action amounts and betting rights
+## 动作金额与加注权
 
-`PlayerAction.amount` is always a **target total for the current street** for
-both `RAISE` and `ALL_IN`. For example, a player who has already committed 40
-and chooses `raiseTo(120)` contributes another 80. An all-in action must use
-the actor's full target (`streetCommitted + stack`), including a short all-in.
-`FOLD`, `CHECK`, and `CALL` always use amount `0`.
+对于 `RAISE` 和 `ALL_IN`，`PlayerAction.amount` 始终表示**玩家在当前街的目标总投入**。
 
-A full raise is an increase at least as large as the prior full-raise size; it
-reopens raise rights for the other active players. A short all-in can increase
-the current bet, so other active players still respond, but it does not reopen
-raise rights for players who already used them. `LegalActions` is the engine's
-authority for call amounts, minimum raise-to, maximum target, all-in, and
-whether rights are open.
+例如，玩家本街已经投入 40，随后执行 `raiseTo(120)`，则本次实际再投入 80。all-in 动作必须使用该玩家的完整目标投入，即 `streetCommitted + stack`；短筹码 all-in 也遵循相同规则。`FOLD`、`CHECK` 和 `CALL` 的 amount 始终为 `0`。
 
-## Button, blinds, and streets
+完整加注要求本次加注增量不小于上一次完整加注的增量，并会为其他仍在牌局中的玩家重新开放加注权。短筹码 all-in 可以提高当前最高投入，因此投入不足的玩家仍需响应，但它不会为已经使用过加注权的玩家重新开放加注权。
 
-With three to six players, the small blind is the next occupied seat clockwise
-from the button and the big blind is the next occupied seat. Preflop action
-starts with the first active seat left of the big blind. In heads-up play the
-button posts the small blind, receives the first preflop action, and the other
-player posts the big blind. On flop, turn, and river, action starts with the
-first active seat left of the button.
+`LegalActions` 是服务端权威的合法动作结果，统一给出跟注金额、最小加注目标、最大投入目标、all-in 可用性以及当前是否拥有加注权。调用方只能提交该结果允许的动作。
 
-After every completed betting street, the engine resets only the street
-commitments. It burns one private card before dealing three flop cards, one
-turn card, and one river card. Burned cards are deliberately not exposed by
-the public hand or event API; observable hole and community cards are immutable
-and deterministic from the injected deck.
+## 按钮位、盲注与行动顺序
 
-## Pots and deterministic decks
+三至六人牌局中，小盲位是按钮位顺时针方向的下一个有人座位，大盲位是再下一个有人座位。翻牌前由大盲左侧第一个仍可行动的座位开始。
 
-Every committed chip funds pots, including chips from folded players. Pots are
-ordered main pot through progressively deeper side pots, while only non-folded
-contributors are eligible to win each layer. Tied winners divide each pot
-equally; any odd chips are allocated clockwise, beginning with the first seat
-left of the button.
+单挑牌局中，按钮位同时是小盲位，并且翻牌前先行动；另一名玩家是大盲位。翻牌、转牌和河牌阶段，都由按钮左侧第一个仍可行动的座位开始。
 
-Use `Deck.ordered(...)` for deterministic tests. Its list is the exact draw
-order: the hand deals hole cards first, then burns and community cards as the
-hand advances. The deck rejects duplicate physical cards and each `draw()`
-returns an immutable remainder, so a test can inject a known deck without a
-hidden shuffle.
+每个下注街结束后，引擎只清空玩家的本街投入，整手牌累计投入仍被保留以供边池计算。进入公共牌阶段时，引擎先烧掉一张私有牌，再依次发出三张翻牌、一张转牌和一张河牌。
+
+烧牌不会通过公开 `Hand` 或领域事件 API 暴露；通过注入牌堆得到的底牌和公共牌则是不可变且确定的。
+
+## 底池、边池与奇数筹码
+
+所有已经投入的筹码都会进入底池，包括后来弃牌玩家的投入。底池按照主池到更深层边池的顺序生成；弃牌玩家可以为底池提供筹码，但没有资格赢得任何一层底池。
+
+多名赢家牌力相同时，每一层底池独立平分。无法整除的奇数筹码从按钮左侧开始，按照座位顺时针顺序分配给该层底池的并列赢家。
+
+## 确定性牌堆
+
+测试中可使用 `Deck.ordered(...)` 注入固定牌序。传入列表就是精确抽牌顺序：引擎先按顺序发两轮底牌，随后在街道推进时抽取烧牌和公共牌。
+
+牌堆会拒绝重复的物理牌；每次 `draw()` 都返回新的不可变剩余牌堆，因此测试可以注入已知牌序，而不会触发隐藏洗牌或原地修改。
