@@ -20,6 +20,8 @@ import java.util.ConcurrentModificationException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Supplier;
 
 /** Coordinates idempotent commands with the pure tournament aggregate and atomic persistence port. */
@@ -28,6 +30,8 @@ public final class TournamentCommandService {
     private final TournamentStore store;
     private final Clock clock;
     private final Supplier<Deck> deckSupplier;
+    // JVM-local keyed lock registry. Values are retained to avoid unsafe monitor-removal races.
+    private final ConcurrentMap<TournamentId, Object> tournamentLocks = new ConcurrentHashMap<>();
 
     public TournamentCommandService(TournamentStore store, Clock clock, Supplier<Deck> deckSupplier) {
         this.store = requireNonNull(store, "store");
@@ -37,6 +41,20 @@ public final class TournamentCommandService {
 
     public TournamentExecution create(CreateTournamentCommand command) {
         requireNonNull(command, "command");
+        return withTournamentLock(command.tournamentId(), () -> createLocked(command));
+    }
+
+    public TournamentExecution act(ActInTournamentCommand command) {
+        requireNonNull(command, "command");
+        return withTournamentLock(command.tournamentId(), () -> actLocked(command));
+    }
+
+    public TournamentExecution startNextHand(StartNextHandCommand command) {
+        requireNonNull(command, "command");
+        return withTournamentLock(command.tournamentId(), () -> startNextHandLocked(command));
+    }
+
+    private TournamentExecution createLocked(CreateTournamentCommand command) {
         Optional<TournamentExecution> receipt = findReceipt(command.tournamentId(), command.commandId());
         if (receipt.isPresent()) {
             return receipt.get();
@@ -55,8 +73,7 @@ public final class TournamentCommandService {
         return commit(command.commandId(), 0, 0, transition);
     }
 
-    public TournamentExecution act(ActInTournamentCommand command) {
-        requireNonNull(command, "command");
+    private TournamentExecution actLocked(ActInTournamentCommand command) {
         Optional<TournamentExecution> receipt = findReceipt(command.tournamentId(), command.commandId());
         if (receipt.isPresent()) {
             return receipt.get();
@@ -68,8 +85,7 @@ public final class TournamentCommandService {
         return commit(command.commandId(), storedTournament.version(), storedTournament.lastSequence(), transition);
     }
 
-    public TournamentExecution startNextHand(StartNextHandCommand command) {
-        requireNonNull(command, "command");
+    private TournamentExecution startNextHandLocked(StartNextHandCommand command) {
         Optional<TournamentExecution> receipt = findReceipt(command.tournamentId(), command.commandId());
         if (receipt.isPresent()) {
             return receipt.get();
@@ -79,6 +95,13 @@ public final class TournamentCommandService {
         TournamentTransition transition = Tournament.restore(storedTournament.checkpoint())
                 .startNextHand(command.handId(), deckSupplier.get());
         return commit(command.commandId(), storedTournament.version(), storedTournament.lastSequence(), transition);
+    }
+
+    private <T> T withTournamentLock(TournamentId tournamentId, Supplier<T> operation) {
+        Object lock = tournamentLocks.computeIfAbsent(tournamentId, ignored -> new Object());
+        synchronized (lock) {
+            return operation.get();
+        }
     }
 
     private Optional<TournamentExecution> findReceipt(TournamentId tournamentId, UUID commandId) {

@@ -19,7 +19,15 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -75,6 +83,52 @@ class TournamentCommandServiceTest {
         assertThat(store.eventCount(tournamentId)).isEqualTo(first.events().size());
         assertThat(suppliedDecks).hasValue(1);
         assertThat(clock.instantCalls()).isEqualTo(1);
+    }
+
+    @Test
+    void simultaneousDuplicateCreatesProduceOneReceiptWithoutExtraDeckOrClockSideEffects()
+            throws Exception {
+        BarrierDeckSupplier racingDeckSupplier = new BarrierDeckSupplier();
+        CountingClock racingClock = new CountingClock(FIXED_INSTANT, ZoneOffset.UTC);
+        TournamentCommandService racingService = new TournamentCommandService(
+                new InMemoryTournamentStore(), racingClock, racingDeckSupplier);
+        CreateTournamentCommand command = createCommand(UUID.randomUUID());
+
+        List<TournamentExecution> executions = concurrently(
+                () -> racingService.create(command),
+                () -> racingService.create(command));
+
+        assertThat(executions).allSatisfy(execution -> assertThat(execution)
+                .isEqualTo(executions.getFirst()));
+        assertThat(racingDeckSupplier.calls()).isEqualTo(1);
+        assertThat(racingClock.instantCalls()).isEqualTo(1);
+    }
+
+    @Test
+    void simultaneousDuplicateActionsProduceOneReceiptWithoutAnExtraClockSideEffect()
+            throws Exception {
+        TournamentExecution created = createTournament();
+        BarrierCountingClock racingClock = new BarrierCountingClock(FIXED_INSTANT, ZoneOffset.UTC);
+        AtomicInteger racingDeckCalls = new AtomicInteger();
+        TournamentCommandService racingService = new TournamentCommandService(
+                store,
+                racingClock,
+                () -> {
+                    racingDeckCalls.incrementAndGet();
+                    return Deck.standard();
+                });
+        ActInTournamentCommand command = new ActInTournamentCommand(
+                UUID.randomUUID(), tournamentId, created.version(), currentActor(created), PlayerAction.call());
+
+        List<TournamentExecution> executions = concurrently(
+                () -> racingService.act(command),
+                () -> racingService.act(command));
+
+        assertThat(executions).allSatisfy(execution -> assertThat(execution)
+                .isEqualTo(executions.getFirst()));
+        assertThat(store.eventCount(tournamentId)).isEqualTo(5);
+        assertThat(racingDeckCalls).hasValue(0);
+        assertThat(racingClock.instantCalls()).isEqualTo(1);
     }
 
     @Test
@@ -172,6 +226,36 @@ class TournamentCommandServiceTest {
         return new TournamentId(new UUID(2, id));
     }
 
+    private static List<TournamentExecution> concurrently(
+            Supplier<TournamentExecution> first, Supplier<TournamentExecution> second) throws Exception {
+        CyclicBarrier startingGate = new CyclicBarrier(3);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<TournamentExecution> firstExecution = executor.submit(() -> {
+                await(startingGate);
+                return first.get();
+            });
+            Future<TournamentExecution> secondExecution = executor.submit(() -> {
+                await(startingGate);
+                return second.get();
+            });
+            await(startingGate);
+            return List.of(
+                    firstExecution.get(5, TimeUnit.SECONDS),
+                    secondExecution.get(5, TimeUnit.SECONDS));
+        }
+    }
+
+    private static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while awaiting concurrent test barrier", exception);
+        } catch (BrokenBarrierException exception) {
+            throw new AssertionError("concurrent test barrier broke", exception);
+        }
+    }
+
     private static final class CountingClock extends Clock {
         private final Instant instant;
         private final ZoneId zone;
@@ -200,6 +284,77 @@ class TournamentCommandServiceTest {
 
         private int instantCalls() {
             return instantCalls;
+        }
+    }
+
+    private static final class BarrierDeckSupplier implements Supplier<Deck> {
+        private static final long PEER_ARRIVAL_TIMEOUT_SECONDS = 2;
+
+        private final AtomicInteger calls = new AtomicInteger();
+        private final CyclicBarrier duplicateCallBarrier = new CyclicBarrier(2);
+
+        @Override
+        public Deck get() {
+            calls.incrementAndGet();
+            try {
+                duplicateCallBarrier.await(PEER_ARRIVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException expectedWhenSerialized) {
+                // A per-tournament lock correctly prevents a duplicate from reaching this supplier.
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while awaiting duplicate deck request", exception);
+            } catch (BrokenBarrierException exception) {
+                throw new AssertionError("duplicate deck request barrier broke", exception);
+            }
+            return Deck.standard();
+        }
+
+        private int calls() {
+            return calls.get();
+        }
+    }
+
+    private static final class BarrierCountingClock extends Clock {
+        private static final long PEER_ARRIVAL_TIMEOUT_SECONDS = 2;
+
+        private final Instant instant;
+        private final ZoneId zone;
+        private final AtomicInteger instantCalls = new AtomicInteger();
+        private final CyclicBarrier duplicateCallBarrier = new CyclicBarrier(2);
+
+        private BarrierCountingClock(Instant instant, ZoneId zone) {
+            this.instant = instant;
+            this.zone = zone;
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public Clock withZone(ZoneId requestedZone) {
+            return new BarrierCountingClock(instant, requestedZone);
+        }
+
+        @Override
+        public Instant instant() {
+            instantCalls.incrementAndGet();
+            try {
+                duplicateCallBarrier.await(PEER_ARRIVAL_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException expectedWhenSerialized) {
+                // A per-tournament lock correctly prevents a duplicate from consulting the clock.
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while awaiting duplicate clock request", exception);
+            } catch (BrokenBarrierException exception) {
+                throw new AssertionError("duplicate clock request barrier broke", exception);
+            }
+            return instant;
+        }
+
+        private int instantCalls() {
+            return instantCalls.get();
         }
     }
 }
