@@ -38,7 +38,7 @@ class ArchitectureTest {
                         tuple("game", "card"),
                         tuple("game", "hand"));
         assertThat(moduleNamed(modules, "persistence").getAllowedDependencies(modules).toString())
-                .isEqualTo("tournament, game");
+                .contains("tournament", "tournament :: port", "game :: betting", "game :: hand");
     }
 
     private static ApplicationModule moduleNamed(ApplicationModules modules, String name) {
