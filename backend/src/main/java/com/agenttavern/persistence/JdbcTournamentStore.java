@@ -12,6 +12,8 @@ import com.agenttavern.tournament.port.TournamentStore;
 import com.agenttavern.tournament.port.TournamentWriteResult;
 import com.agenttavern.tournament.port.TournamentWriteResult.WriteStatus;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
 import java.util.List;
@@ -321,7 +323,9 @@ public class JdbcTournamentStore implements TournamentStore {
             parameters.put("tournamentId" + index, event.tournamentId().value());
             parameters.put("sequence" + index, event.sequence());
             parameters.put("aggregateVersion" + index, event.aggregateVersion());
-            parameters.put("occurredAt" + index, event.occurredAt());
+            // PostgreSQL JDBC does not infer a SQL type for Instant. OffsetDateTime binds as timestamptz;
+            // the adjacent epoch-second/nano columns retain the event's full nanosecond precision.
+            parameters.put("occurredAt" + index, OffsetDateTime.ofInstant(event.occurredAt(), ZoneOffset.UTC));
             parameters.put("occurredEpochSecond" + index, event.occurredAt().getEpochSecond());
             parameters.put("occurredNano" + index, event.occurredAt().getNano());
             parameters.put("eventType" + index, encoded.eventType());

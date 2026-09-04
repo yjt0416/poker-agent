@@ -1,0 +1,5 @@
+spring:
+  datasource:
+    url: ${POKER_TEST_DB_URL}
+    username: ${POKER_TEST_DB_USERNAME}
+    password: ${POKER_TEST_DB_PASSWORD}
