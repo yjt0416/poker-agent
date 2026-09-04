@@ -36,4 +36,15 @@ describe('Agent Tavern table', () => {
     act(() => vi.advanceTimersByTime(1200))
     expect(screen.getByRole('button', { name: /开始下一手牌/ })).toBeInTheDocument()
   })
+
+  it('opens and closes the compact action-log drawer', () => {
+    render(<App />)
+
+    const toggle = screen.getByRole('button', { name: '动态' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '关闭牌桌动态' }))
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  })
 })

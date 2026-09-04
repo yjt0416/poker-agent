@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { enterTable } from './api'
+import { ApiError, enterTable } from './api'
 
 const table = {
   tableId: 'table-1', version: 1, mode: 'PLAYER', status: 'IN_HAND', handNumber: 1,
@@ -24,5 +24,13 @@ describe('table entry', () => {
     expect(second.tableId).toBe('table-1')
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/tables')).toHaveLength(1)
+  })
+
+  it('turns a broken backend connection into an actionable Chinese error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+
+    await expect(enterTable()).rejects.toEqual(
+      new ApiError(0, '无法连接牌桌服务，请确认后端已启动'),
+    )
   })
 })

@@ -53,11 +53,24 @@ export class ApiError extends Error {
 }
 
 async function request(path: string, init?: RequestInit): Promise<TableView> {
-  const response = await fetch(path, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-    ...init,
-  })
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 10_000)
+  let response: Response
+  try {
+    response = await fetch(path, {
+      credentials: 'include',
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      signal: init?.signal ?? controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(0, '连接牌桌超时，请检查后端服务后重试')
+    }
+    throw new ApiError(0, '无法连接牌桌服务，请确认后端已启动')
+  } finally {
+    window.clearTimeout(timeout)
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { message?: string }
     throw new ApiError(response.status, body.message ?? `牌桌服务暂时不可用（HTTP ${response.status}）`)

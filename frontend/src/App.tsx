@@ -41,6 +41,7 @@ export function App() {
   const [connection, setConnection] = useState<'connecting' | 'online' | 'demo'>('connecting')
   const [notice, setNotice] = useState('正在进入百兽茶馆……')
   const [autoPlay, setAutoPlay] = useState(false)
+  const [logOpen, setLogOpen] = useState(false)
   const timers = useRef<number[]>([])
 
   useEffect(() => {
@@ -124,6 +125,7 @@ export function App() {
       sprite: seat.sprite,
       seat: positions[seat.seat] ?? positions[0],
       folded: ['FOLDED', 'OUT', 'ELIMINATED'].includes(seat.status),
+      thinking: seat.seat === view.actorSeat,
       dealer: seat.seat === view.buttonSeat,
     })))
     const self = view.seats.find((seat) => seat.self)
@@ -263,6 +265,7 @@ export function App() {
   async function switchMode(mode: 'PLAYER' | 'SPECTATOR') {
     setThinking(true)
     setAutoPlay(false)
+    setLogOpen(false)
     setNotice(mode === 'PLAYER' ? '正在安排玩家牌桌……' : '正在点亮 AI 决策剧场……')
     try {
       hydrate(await createTable(mode))
@@ -275,8 +278,25 @@ export function App() {
     }
   }
 
+  async function reconnect() {
+    if (thinking) return
+    setThinking(true)
+    setConnection('connecting')
+    setNotice('正在重新连接 Java 对局服务……')
+    try {
+      hydrate(await enterTable())
+      setConnection('online')
+      setNotice('Java 对局服务已重新连接')
+    } catch (error) {
+      setConnection('demo')
+      setNotice(`重连失败 · ${error instanceof Error ? error.message : '服务不可用'}`)
+    } finally {
+      setThinking(false)
+    }
+  }
+
   return (
-    <main className={`app-shell ${serverTable?.mode === 'SPECTATOR' ? 'spectator-mode' : 'player-mode'}`}>
+    <main className={`app-shell ${serverTable?.mode === 'SPECTATOR' ? 'spectator-mode' : 'player-mode'} ${logOpen ? 'drawer-open' : ''}`} aria-busy={thinking}>
       <div className="ambient-lamp lamp-left" />
       <div className="ambient-lamp lamp-right" />
 
@@ -288,9 +308,16 @@ export function App() {
         <div className="table-title">
           <span className="eyebrow">戌时 · 临江厅 · 七号桌</span>
           <h1>{serverTable?.mode === 'SPECTATOR' ? 'AI 决策剧场' : '无上限德州扑克'}</h1>
+          <div className="compact-toolbar" aria-label="紧凑视图工具栏">
+            <span>第 {hand} 手 · {streetLabel} · {serverTable?.blinds.small ?? 50}/{serverTable?.blinds.big ?? 100}</span>
+            <button className={serverTable?.mode !== 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('PLAYER')} disabled={thinking}>玩家</button>
+            <button className={serverTable?.mode === 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('SPECTATOR')} disabled={thinking}>观战</button>
+            <button aria-expanded={logOpen} onClick={() => setLogOpen((value) => !value)}>动态</button>
+          </div>
         </div>
         <div className="header-actions">
-          <span className={`connection connection-${connection}`}><i /> {notice}</span>
+          <span className={`connection connection-${connection}`} role="status" aria-live="polite" title={notice}><i /> {notice}</span>
+          {connection === 'demo' && <button className="retry-button" onClick={() => void reconnect()} disabled={thinking}>重连</button>}
           <button className="icon-button" aria-label="游戏设置">⚙</button>
         </div>
       </header>
@@ -391,7 +418,8 @@ export function App() {
           </div>
         </section>
 
-        <aside className="side-panel right-panel">
+        <aside className={`side-panel right-panel ${logOpen ? 'compact-open' : ''}`}>
+          <button className="drawer-close" aria-label="关闭牌桌动态" onClick={() => setLogOpen(false)}>×</button>
           <PanelTitle icon="✦" title="牌桌动态" subtitle="ACTION LOG" />
           <div className="log-list" aria-label="行动日志">
             {[...logs].reverse().map((log) => (
