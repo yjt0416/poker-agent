@@ -23,7 +23,7 @@ class ArchitectureTest {
 
         assertThat(modules.stream().map(ApplicationModule::getIdentifier))
                 .extracting(Object::toString)
-                .containsExactlyInAnyOrder("game", "tournament", "persistence");
+                .containsExactlyInAnyOrder("game", "tournament", "persistence", "agents");
         assertThat(game.isOpen()).isFalse();
         assertThat(game.getNamedInterfaces().stream()
                 .filter(NamedInterface::isNamed)
@@ -37,6 +37,11 @@ class ArchitectureTest {
                         tuple("game", "betting"),
                         tuple("game", "card"),
                         tuple("game", "hand"));
+        assertThat(moduleNamed(modules, "agents").getAllowedDependencies(modules).stream())
+                .extracting(
+                        dependency -> dependency.getTargetModule().getIdentifier().toString(),
+                        dependency -> dependency.getTargetNamedInterface().getName())
+                .containsExactlyInAnyOrder(tuple("game", "betting"), tuple("game", "card"));
         assertThat(moduleNamed(modules, "persistence").getAllowedDependencies(modules).toString())
                 .contains("tournament", "tournament :: port", "game :: betting", "game :: hand");
     }
