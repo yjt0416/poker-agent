@@ -56,6 +56,8 @@ class AgentCoreTest {
         AgentDecision first = provider.decide(observation);
         assertThat(provider.decide(observation)).isEqualTo(first);
         assertThat(AgentDecisionPolicy.isLegal(observation.legalActions(), first.action())).isTrue();
+        assertThat(first.tableTalk()).isNotBlank().doesNotContain("range", "EV");
+        assertThat(first.publicSummary()).isNotBlank();
     }
 
     private static AgentObservation observation(List<Card> hole, LegalActions legal) {

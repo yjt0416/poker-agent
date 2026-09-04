@@ -61,4 +61,23 @@ class GameTableControllerTest {
                 .andExpect(jsonPath("$.version").isNumber())
                 .andExpect(jsonPath("$.actionLog[?(@.name == '旅人')]").exists());
     }
+
+    @Test
+    void spectatorReceivesNoPrivateCardsAndCanAdvanceOneAgentAtATime() throws Exception {
+        MvcResult created = mvc.perform(post("/api/tables")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"SPECTATOR\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("SPECTATOR"))
+                .andExpect(jsonPath("$.selfSeat").value(-1))
+                .andExpect(jsonPath("$.holeCards.length()").value(0))
+                .andExpect(jsonPath("$.actionLog.length()").value(0))
+                .andReturn();
+        Cookie session = created.getResponse().getCookie(GameTableController.SESSION_COOKIE);
+
+        mvc.perform(post("/api/tables/current/advance").cookie(session))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.holeCards.length()").value(0))
+                .andExpect(jsonPath("$.actionLog.length()").value(1));
+    }
 }

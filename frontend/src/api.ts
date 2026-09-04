@@ -80,11 +80,15 @@ async function enterTableOnce(): Promise<TableView> {
     return await request('/api/tables/current')
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 401) throw error
-    return request('/api/tables', {
-      method: 'POST',
-      body: JSON.stringify({ displayName: '旅人' }),
-    })
+    return createTable('PLAYER')
   }
+}
+
+export function createTable(mode: 'PLAYER' | 'SPECTATOR') {
+  return request('/api/tables', {
+    method: 'POST',
+    body: JSON.stringify({ displayName: '旅人', mode }),
+  })
 }
 
 export function submitAction(type: string, amount?: number) {
@@ -103,4 +107,8 @@ export function submitTalk(text: string) {
 
 export function startNextHand() {
   return request('/api/tables/current/next-hand', { method: 'POST', body: '{}' })
+}
+
+export function advanceSpectator() {
+  return request('/api/tables/current/advance', { method: 'POST', body: '{}' })
 }

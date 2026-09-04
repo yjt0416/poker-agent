@@ -4,7 +4,7 @@
 
 第一阶段提供下注、摊牌、领域事件和质量守卫。第二阶段提供 6 人各 10,000 筹码、盲注升级、按钮轮转、淘汰排名、不可变检查点、连续事件流、幂等命令回执及 `TournamentStore` 的 PostgreSQL/JDBC 实现；结构由 Flyway 管理。
 
-默认 `local` profile 使用内存存储，可零配置运行；`postgres` profile 使用 JDBC/Flyway 持久化。HTTP API 已可供 React 牌桌使用，WebSocket 推送与完整观战模式仍在后续阶段。
+默认 `local` profile 使用内存存储，可零配置运行；`postgres` profile 使用 JDBC/Flyway 持久化。HTTP API 已可供 React 牌桌使用，玩家对战与 AI 互战观战模式均已接通；WebSocket 推送仍在后续阶段。
 
 ## 本地启动与 API
 
@@ -14,11 +14,12 @@
 
 主要端点：
 
-- `POST /api/tables`：创建玩家对 Agent 的匿名牌桌并设置 HttpOnly 会话 Cookie；
+- `POST /api/tables`：以 `PLAYER` 或 `SPECTATOR` 模式创建匿名牌桌并设置 HttpOnly 会话 Cookie；
 - `GET /api/tables/current`：读取当前玩家的脱敏牌桌投影；
 - `POST /api/tables/current/actions`：提交 `FOLD`、`CHECK`、`CALL`、`RAISE` 或 `ALL_IN`；
 - `POST /api/tables/current/chat`：提交经过安全策略处理的牌桌发言；
 - `POST /api/tables/current/next-hand`：在手牌结束后开始下一手牌。
+- `POST /api/tables/current/advance`：在观战模式中只推进一名 Agent 的行动，便于逐步观察决策。
 
 启用 DeepSeek：
 

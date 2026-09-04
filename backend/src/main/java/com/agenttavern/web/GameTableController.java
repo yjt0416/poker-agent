@@ -23,7 +23,9 @@ class GameTableController {
 
     @PostMapping
     TableView create(@RequestBody(required = false) CreateTableRequest request, HttpServletResponse response) {
-        GameTableService.CreatedTable created = tables.createPlayerTable(request == null ? null : request.displayName());
+        GameTableService.CreatedTable created = tables.createTable(
+                request == null ? null : request.displayName(),
+                request == null ? null : request.mode());
         ResponseCookie cookie = ResponseCookie.from(SESSION_COOKIE, created.sessionToken())
                 .httpOnly(true)
                 .sameSite("Lax")
@@ -56,5 +58,10 @@ class GameTableController {
     @PostMapping("/current/next-hand")
     TableView nextHand(@CookieValue(name = SESSION_COOKIE, required = false) String token) {
         return tables.nextHand(token);
+    }
+
+    @PostMapping("/current/advance")
+    TableView advance(@CookieValue(name = SESSION_COOKIE, required = false) String token) {
+        return tables.advanceSpectator(token);
     }
 }

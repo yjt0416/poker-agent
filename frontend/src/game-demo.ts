@@ -28,11 +28,11 @@ export type TableLog = {
 }
 
 export const initialAgents: AgentSeat[] = [
-  { id: 'vesper', name: '薇斯珀', subtitle: '狡黠诈术师', stack: 2100, bet: 0, mood: '在观察你', sprite: 0, seat: 'seat-left', dealer: true },
-  { id: 'hogarth', name: '霍加斯', subtitle: '激进赌徒', stack: 2450, bet: 150, mood: '胜券在握', sprite: 1, seat: 'seat-top' },
-  { id: 'mirelle', name: '米蕾尔', subtitle: '冷静分析师', stack: 2220, bet: 150, mood: '若有所思', sprite: 2, seat: 'seat-right-top' },
-  { id: 'bruno', name: '布鲁诺', subtitle: '强硬老兵', stack: 2760, bet: 150, mood: '不动声色', sprite: 3, seat: 'seat-right' },
-  { id: 'bunji', name: '邦吉', subtitle: '谨慎猎手', stack: 1980, bet: 0, mood: '有些紧张', sprite: 4, seat: 'seat-left-bottom', folded: true },
+  { id: 'vesper', name: '阿绯', subtitle: '临江茶馆掌柜', stack: 2100, bet: 0, mood: '笑着看你', sprite: 0, seat: 'seat-left', dealer: true },
+  { id: 'hogarth', name: '豪哥', subtitle: '北地矿场工头', stack: 2450, bet: 150, mood: '兴致正高', sprite: 1, seat: 'seat-top' },
+  { id: 'mirelle', name: '沈听澜', subtitle: '江南票号账房', stack: 2220, bet: 150, mood: '心里有数', sprite: 2, seat: 'seat-right-top' },
+  { id: 'bruno', name: '杜叔', subtitle: '退隐镖师', stack: 2760, bet: 150, mood: '稳如老钟', sprite: 3, seat: 'seat-right' },
+  { id: 'bunji', name: '小满', subtitle: '岭南药铺学徒', stack: 1980, bet: 0, mood: '耐心候着', sprite: 4, seat: 'seat-left-bottom', folded: true },
 ]
 
 export const communityCards: PlayingCard[] = [
@@ -47,10 +47,10 @@ export const holeCards: PlayingCard[] = [
 ]
 
 export const initialLogs: TableLog[] = [
-  { id: 1, name: '霍加斯', action: '加注至 150', detail: '“想看下一张牌？先交点学费。”', tone: 'red' },
-  { id: 2, name: '米蕾尔', action: '跟注 150', detail: '下注范围仍然合理。', tone: 'blue' },
-  { id: 3, name: '布鲁诺', action: '跟注 150', detail: '他没有表现出犹豫。', tone: 'gold' },
-  { id: 4, name: '邦吉', action: '弃牌', detail: '“这手我就不奉陪啦。”', tone: 'green' },
+  { id: 1, name: '豪哥', action: '加注至 150', detail: '“想看下一张？先把茶钱补上。”', tone: 'red' },
+  { id: 2, name: '沈听澜', action: '跟注 150', detail: '“价钱合适，我再看一张。”', tone: 'blue' },
+  { id: 3, name: '杜叔', action: '跟注 150', detail: '“我还坐得住，跟上。”', tone: 'gold' },
+  { id: 4, name: '小满', action: '弃牌', detail: '“药可以慢熬，牌不能硬追。”', tone: 'green' },
 ]
 
 export const formatChips = (value: number) => new Intl.NumberFormat('zh-CN').format(value)

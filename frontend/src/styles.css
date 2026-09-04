@@ -51,7 +51,7 @@ button { color: inherit; }
 .brand { display: flex; align-items: center; gap: 12px; color: #eee0c4; text-decoration: none; letter-spacing: .1em; }
 .brand-mark { display:grid; place-items:center; width:42px; height:42px; border: 1px solid #bd8e4f; transform: rotate(45deg); color:var(--gold-bright); font-family:'Playfair Display'; font-size:24px; background:linear-gradient(135deg,#241a10,#090806); box-shadow:inset 0 0 0 3px #0c0a08, 0 0 18px rgba(218,161,77,.18); }
 .brand-mark::first-letter { transform:rotate(-45deg); }
-.brand b { display:block; font-family:'Playfair Display', serif; font-size:17px; }
+.brand b { display:block; font-family:'Noto Sans SC', serif; font-size:18px; letter-spacing:.22em; }
 .brand small { display:block; margin-top:3px; color:#806f59; font-size:9px; letter-spacing:.28em; }
 .table-title { text-align:center; line-height:1.1; }
 .table-title .eyebrow { color:#957e60; font-size:10px; letter-spacing:.32em; }
@@ -86,6 +86,10 @@ button { color: inherit; }
 .intel-icon { color:#cf9f5b; }
 .intel-card b { color:#caae82; font-size:10px; }
 .intel-card p { margin:5px 0 0; color:#756b5e; font-size:9px; line-height:1.7; }
+.mode-switch { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:16px; padding:4px; border:1px solid #34291e; background:#0b0907; }
+.mode-switch button { height:30px; border:0; color:#766a59; background:transparent; font-size:9px; cursor:pointer; }
+.mode-switch button.active { color:#e0bd7d; background:linear-gradient(#49311a,#25180e); box-shadow:inset 0 0 0 1px #77522b; }
+.mode-switch button:disabled { cursor:wait; opacity:.45; }
 .player-mini-card { display:flex; align-items:center; gap:9px; margin-top:auto; position:absolute; bottom:42px; width:194px; padding:9px; border:1px solid #3b3022; background:#0b0a08; }
 .player-mini-card .avatar { width:42px; height:42px; }
 .player-mini-card div span,.player-mini-card div b { display:block; }
@@ -117,8 +121,8 @@ button { color: inherit; }
 .glowing-card { box-shadow:0 0 0 1px #edc675,0 0 19px rgba(240,183,83,.58),0 7px 15px rgba(0,0,0,.42); }
 .round-marker { position:absolute; left:50%; bottom:17%; transform:translateX(-50%); display:flex; align-items:center; gap:5px; color:#776a59; font-size:9px; }
 .round-marker span { margin-right:5px; letter-spacing:.12em; }
-.round-marker i { width:5px; height:5px; background:#d8ab5c; border-radius:50%; }
-.round-marker i.muted { background:#33483d; }
+.round-marker i { width:5px; height:5px; background:#33483d; border-radius:50%; transition:.25s ease; }
+.round-marker i.active { background:#d8ab5c; box-shadow:0 0 8px rgba(216,171,92,.65); }
 
 .avatar { flex:none; width:48px; height:48px; border-radius:50%; background-image:url('/assets/characters/agent-roster-atlas-v1.png'); background-size:400% 200%; background-repeat:no-repeat; background-color:#18120d; border:1px solid #966b38; box-shadow:inset 0 0 0 3px #15100c,0 4px 14px rgba(0,0,0,.5); }
 .avatar-large { width:156px; height:156px; border:0; border-radius:36% 36% 47% 47%; box-shadow:none; filter:drop-shadow(0 15px 12px rgba(0,0,0,.72)); }
@@ -137,6 +141,8 @@ button { color: inherit; }
 .seat-right-top { right:18%; top:5%; }
 .seat-right { right:1%; top:31%; }
 .seat-left-bottom { left:5%; bottom:16%; }
+.seat-bottom { left:43%; bottom:12%; }
+.spectator-mode .seat-bottom { bottom:27%; }
 .seat-left .seat-bet { right:-37px; top:125px; }
 .seat-top .seat-bet,.seat-right-top .seat-bet { left:75px; bottom:-23px; }
 .seat-right .seat-bet { left:-35px; top:135px; }
@@ -149,7 +155,11 @@ button { color: inherit; }
 @keyframes pulse { to { opacity:.2; transform:translateY(-2px); } }
 .agent-speech { position:absolute; z-index:12; left:27%; bottom:24%; display:flex; align-items:center; gap:9px; width:270px; padding:8px 12px 8px 8px; border:1px solid #493824; border-radius:24px 5px 5px 24px; background:rgba(13,11,9,.92); box-shadow:0 8px 25px rgba(0,0,0,.4); }
 .agent-speech .avatar { width:38px; height:38px; }
+.agent-speech > div { min-width:0; }
+.agent-speech strong { display:block; margin-bottom:2px; color:#d7b77e; font-size:9px; font-weight:600; }
 .agent-speech p { margin:0; color:#a79986; font-size:9px; line-height:1.5; }
+.spectator-mode .agent-speech { left:2%; bottom:3%; width:300px; }
+.spectator-mode .action-dock { right:2%; }
 
 .hero-seat { position:absolute; z-index:11; left:50%; bottom:70px; transform:translateX(-50%); width:250px; }
 .hero-cards { position:absolute; z-index:1; left:50%; bottom:58px; transform:translateX(-50%); display:flex; }
@@ -181,6 +191,13 @@ button { color: inherit; }
 .raise-control input { flex:1; accent-color:#c88a3b; height:3px; }
 .next-hand-button { width:100%; height:66px; border:1px solid #ad7c3f; color:#efcf96; background:linear-gradient(135deg,#755027,#392511); cursor:pointer; font-size:15px; font-weight:700; letter-spacing:.08em; }
 .next-hand-button span { margin-left:12px; }
+.spectator-controls { display:grid; grid-template-columns:1fr 105px 105px; align-items:center; gap:8px; min-height:54px; }
+.spectator-controls span,.spectator-controls small { display:block; }
+.spectator-controls span { color:#d8bd8d; font-size:11px; font-weight:700; }
+.spectator-controls small { margin-top:4px; color:#6f6352; font-size:8px; }
+.spectator-controls button { height:38px; border:1px solid #6b4b2a; background:#2c1d10; color:#c7a46f; font-size:9px; cursor:pointer; }
+.spectator-controls button.active { color:#d9e4cc; border-color:#53734b; background:#263d24; }
+.spectator-controls button:disabled { opacity:.45; cursor:wait; }
 
 .log-list { flex:1; min-height:0; overflow:auto; padding-right:3px; }
 .log-list::-webkit-scrollbar { width:3px; }.log-list::-webkit-scrollbar-thumb{background:#4c3925}

@@ -63,8 +63,10 @@ public class GameTableService {
         this.chatService = chatService;
     }
 
-    CreatedTable createPlayerTable(String requestedName) {
+    CreatedTable createTable(String requestedName, String requestedMode) {
         String displayName = normalizeDisplayName(requestedName);
+        TournamentMode mode = "SPECTATOR".equalsIgnoreCase(requestedMode)
+                ? TournamentMode.SPECTATOR : TournamentMode.PLAYER;
         TournamentId tournamentId = TournamentId.random();
         List<PlayerId> players = new ArrayList<>(6);
         List<TournamentEntrant> entrants = new ArrayList<>(6);
@@ -74,14 +76,15 @@ public class GameTableService {
             entrants.add(new TournamentEntrant(id, seat));
         }
         TournamentExecution execution = commands.create(new CreateTournamentCommand(
-                UUID.randomUUID(), tournamentId, TournamentMode.PLAYER,
+                UUID.randomUUID(), tournamentId, mode,
                 entrants, 0, HandId.random()));
-        RuntimeTable table = new RuntimeTable(tournamentId, players.get(HUMAN_SEAT), displayName, players, execution);
+        PlayerId humanId = mode == TournamentMode.PLAYER ? players.get(HUMAN_SEAT) : null;
+        RuntimeTable table = new RuntimeTable(tournamentId, humanId, displayName, players, execution);
         tables.put(tournamentId, table);
         String token = UUID.randomUUID().toString();
-        sessions.put(token, new TableSession(tournamentId, players.get(HUMAN_SEAT)));
+        sessions.put(token, new TableSession(tournamentId));
         synchronized (table) {
-            advanceAgents(table);
+            if (mode == TournamentMode.PLAYER) advanceAgents(table);
             return new CreatedTable(token, project(table));
         }
     }
@@ -109,6 +112,7 @@ public class GameTableService {
     TableView talk(String token, String text) {
         RuntimeTable table = requireTable(token);
         synchronized (table) {
+            if (table.humanId == null) throw new TableSessionException(409, "观战模式不能代替 Agent 发言");
             TableChatMessage message = chatService.submit(table.id, table.humanId, text);
             table.chat.add(message);
             table.trimHistory();
@@ -124,9 +128,21 @@ public class GameTableService {
             }
             table.execution = commands.startNextHand(new StartNextHandCommand(
                     UUID.randomUUID(), table.id, table.execution.version(), HandId.random()));
-            table.addAction(-1, "酒馆荷官", "开始第 "
+            table.addAction(-1, "茶馆荷官", "开始第 "
                     + (table.execution.checkpoint().completedHands() + 1) + " 手牌", "盲注已下，卡牌已发出");
-            advanceAgents(table);
+            if (table.humanId != null) advanceAgents(table);
+            return project(table);
+        }
+    }
+
+    TableView advanceSpectator(String token) {
+        RuntimeTable table = requireTable(token);
+        synchronized (table) {
+            if (table.humanId != null) throw new TableSessionException(409, "玩家模式不能手动推进 Agent");
+            if (table.execution.checkpoint().status() != TournamentStatus.IN_HAND) {
+                throw new TableSessionException(409, "当前手牌已经结束");
+            }
+            advanceOneAgent(table);
             return project(table);
         }
     }
@@ -137,30 +153,36 @@ public class GameTableService {
             Hand hand = currentHand(table.execution);
             PlayerId actor = hand.actor().playerId();
             if (actor.equals(table.humanId)) return;
-            int seat = hand.actor().seatIndex();
-            AgentObservation observation = observation(table, hand, actor, seat);
-            AgentDecision decision;
-            try {
-                decision = AgentDecisionPolicy.validateOrFallback(observation, decisions.decide(observation));
-            } catch (RuntimeException exception) {
-                decision = AgentDecisionPolicy.fallback(hand.legalActions(), "决策服务暂不可用，已执行安全动作。");
-            }
-            table.execution = commands.act(new ActInTournamentCommand(
-                    UUID.randomUUID(), table.id, table.execution.version(), actor, decision.action()));
-            AgentPersona persona = personaForSeat(seat);
-            table.addAction(seat, persona.name(), describe(decision.action()), decision.publicSummary());
-            if (!decision.tableTalk().isBlank()) {
-                try {
-                    String safeTalk = TableChatPolicy.normalize(decision.tableTalk());
-                    table.chat.add(new TableChatMessage(
-                            UUID.randomUUID(), table.id, actor, safeTalk, java.time.Instant.now()));
-                } catch (RuntimeException ignored) {
-                    // A malformed model utterance never blocks the poker action.
-                }
-            }
-            table.trimHistory();
+            advanceOneAgent(table);
         }
         throw new IllegalStateException("automatic action safety limit exceeded");
+    }
+
+    private void advanceOneAgent(RuntimeTable table) {
+        Hand hand = currentHand(table.execution);
+        PlayerId actor = hand.actor().playerId();
+        int seat = hand.actor().seatIndex();
+        AgentObservation observation = observation(table, hand, actor, seat);
+        AgentDecision decision;
+        try {
+            decision = AgentDecisionPolicy.validateOrFallback(observation, decisions.decide(observation));
+        } catch (RuntimeException exception) {
+            decision = AgentDecisionPolicy.fallback(hand.legalActions(), "决策服务暂不可用，已执行安全动作。");
+        }
+        table.execution = commands.act(new ActInTournamentCommand(
+                UUID.randomUUID(), table.id, table.execution.version(), actor, decision.action()));
+        AgentPersona persona = personaForSeat(seat);
+        table.addAction(seat, persona.name(), describe(decision.action()), decision.publicSummary());
+        if (!decision.tableTalk().isBlank()) {
+            try {
+                String safeTalk = TableChatPolicy.normalize(decision.tableTalk());
+                table.chat.add(new TableChatMessage(
+                        UUID.randomUUID(), table.id, actor, safeTalk, java.time.Instant.now()));
+            } catch (RuntimeException ignored) {
+                // A malformed model utterance never blocks the poker action.
+            }
+        }
+        table.trimHistory();
     }
 
     private AgentObservation observation(RuntimeTable table, Hand hand, PlayerId actor, int seat) {
@@ -186,7 +208,7 @@ public class GameTableService {
                 .sorted(Comparator.comparingInt(value -> value.seatIndex()))
                 .map(seat -> {
                     SeatState handSeat = handSeats.get(seat.playerId());
-                    boolean self = seat.playerId().equals(table.humanId);
+                    boolean self = table.humanId != null && seat.playerId().equals(table.humanId);
                     int index = seat.seatIndex();
                     return new TableView.SeatView(index,
                             self ? table.displayName : personaForSeat(index).name(),
@@ -200,20 +222,21 @@ public class GameTableService {
 
         Integer actorSeat = hand == null ? null : hand.actor().seatIndex();
         List<TableView.CardView> board = hand == null ? List.of() : hand.board().stream().map(GameTableService::card).toList();
-        List<TableView.CardView> hole = hand == null ? List.of() : hand.holeCards(table.humanId).stream().map(GameTableService::card).toList();
-        TableView.LegalActionView legal = hand != null && hand.actor().playerId().equals(table.humanId)
+        List<TableView.CardView> hole = hand == null || table.humanId == null
+                ? List.of() : hand.holeCards(table.humanId).stream().map(GameTableService::card).toList();
+        TableView.LegalActionView legal = hand != null && table.humanId != null && hand.actor().playerId().equals(table.humanId)
                 ? legal(hand.legalActions()) : TableView.LegalActionView.none();
         long pot = hand == null ? 0 : hand.seats().stream().mapToLong(SeatState::handCommitted).sum();
         List<TableView.ChatView> chat = table.chat.stream().map(message -> {
             int seat = table.players.indexOf(message.speakerId());
-            String name = seat == HUMAN_SEAT ? table.displayName : personaForSeat(seat).name();
+            String name = table.humanId != null && seat == HUMAN_SEAT ? table.displayName : personaForSeat(seat).name();
             return new TableView.ChatView(seat, name, message.text(), message.occurredAt());
         }).toList();
 
         return new TableView(checkpoint.id().value().toString(), table.execution.version(), checkpoint.mode().name(),
                 checkpoint.status().name(), checkpoint.completedHands() + 1,
                 hand == null ? checkpoint.status().name() : hand.street().name(), pot,
-                checkpoint.buttonSeat(), actorSeat, HUMAN_SEAT,
+                checkpoint.buttonSeat(), actorSeat, table.humanId == null ? -1 : HUMAN_SEAT,
                 new TableView.BlindView(checkpoint.currentHand().map(value -> value.blinds().smallBlind())
                         .orElse(checkpoint.seats().isEmpty() ? 0L : Tournament.restore(checkpoint).currentBlinds().smallBlind()),
                         checkpoint.currentHand().map(value -> value.blinds().bigBlind())
@@ -226,14 +249,15 @@ public class GameTableService {
         TableSession session = sessions.get(token);
         if (session == null) throw new TableSessionException(401, "牌桌会话已失效");
         RuntimeTable table = tables.get(session.tableId());
-        if (table == null || !table.humanId.equals(session.playerId())) {
+        if (table == null) {
             throw new TableSessionException(401, "牌桌会话已失效");
         }
         return table;
     }
 
     private static void requireHumanTurn(RuntimeTable table) {
-        if (table.execution.checkpoint().status() != TournamentStatus.IN_HAND
+        if (table.humanId == null
+                || table.execution.checkpoint().status() != TournamentStatus.IN_HAND
                 || !currentHand(table.execution).actor().playerId().equals(table.humanId)) {
             throw new TableSessionException(409, "当前不是你的行动回合");
         }
@@ -298,7 +322,7 @@ public class GameTableService {
     }
 
     private static AgentPersona personaForSeat(int seat) {
-        if (seat < 0 || seat >= HUMAN_SEAT) throw new IllegalArgumentException("seat has no agent persona: " + seat);
+        if (seat < 0 || seat >= AgentRoster.all().size()) throw new IllegalArgumentException("seat has no agent persona: " + seat);
         return AgentRoster.all().get(seat);
     }
 
@@ -320,7 +344,7 @@ public class GameTableService {
     }
 
     record CreatedTable(String sessionToken, TableView view) {}
-    private record TableSession(TournamentId tableId, PlayerId playerId) {}
+    private record TableSession(TournamentId tableId) {}
 
     private static final class RuntimeTable {
         private final TournamentId id;
