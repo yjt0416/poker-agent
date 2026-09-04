@@ -15,10 +15,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Test double for the atomic persistence contract. The implementation is added with the command
- * service; this type makes the transactional behaviour visible to the service tests.
+ * In-memory test double for the atomic persistence contract, shared by command-service
+ * acceptance tests.
  */
-final class InMemoryTournamentStore implements TournamentStore {
+public final class InMemoryTournamentStore implements TournamentStore {
 
     private State state = State.empty();
     private boolean failNextCommit;

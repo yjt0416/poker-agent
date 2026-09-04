@@ -1,12 +1,20 @@
-# 德州扑克引擎指南
+# 德州扑克引擎与锦标赛指南
 
-本模块是 Agent Tavern 第一阶段已经完成的垂直切片：一个确定性的内存德州扑克引擎，包含下注、摊牌、领域事件和质量守卫。
+本模块包含 Agent Tavern 已完成的两个后端阶段：确定性的德州扑克规则引擎，以及六人单桌锦标赛的持久化与宕机恢复能力。
 
-它还不是完整游戏产品，暂不提供浏览器前端、数据库、HTTP API 或 Agent/LLM 集成。
+第一阶段提供下注、摊牌、领域事件和质量守卫。第二阶段提供 6 人各 10,000 筹码、盲注升级、按钮轮转、淘汰排名、不可变检查点、连续事件流、幂等命令回执及 `TournamentStore` 的 PostgreSQL/JDBC 实现；结构由 Flyway 管理。
+
+它还不是完整游戏产品：浏览器前端、HTTP/WebSocket API、Agent 编排和 DeepSeek/其他 LLM 集成尚未实现。
+
+## 锦标赛恢复与隐私边界
+
+命令服务在每次创建锦标赛、行动或开始下一手牌时，原子提交检查点、事件批次和命令回执。服务重建后从持久化检查点恢复，再执行下一条命令；事件序号在同一锦标赛内严格连续。
+
+检查点是服务端私有状态：其中包含底牌、余牌堆和烧牌，因而不能作为公开事件或客户端状态传输。当前不存在 WebSocket 广播端点；未来接入时必须在上述原子提交**成功之后**才广播事件。失败、冲突或幂等重放不得产生未提交事件的广播。
 
 ## 验证方式
 
-请先选择 Java 21，然后在仓库根目录执行以下命令。
+要求：Java 21 与 Maven Wrapper。请先选择 Java 21，然后在仓库根目录执行以下命令。
 
 Windows 下只运行引擎性质校验与架构守卫：
 
@@ -25,6 +33,24 @@ Unix 或 CI 的等价命令：
 ```sh
 ./backend/mvnw -f backend/pom.xml clean verify
 ```
+
+默认验证不需要 Docker 或可连接的 PostgreSQL；它会覆盖领域、恢复、序列化和迁移契约。
+
+PostgreSQL 集成验收额外需要 Docker，使用 Testcontainers：
+
+```powershell
+backend\mvnw.cmd -f backend\pom.xml -Ppostgres-it verify
+```
+
+无 Docker 时，该命令仍会完成默认测试；`PostgresTournamentStoreIT` 会明确显示为 `SKIPPED`，表示 Docker 验收尚未执行，而不是 PostgreSQL 测试通过。也可在专门的回环、测试专用 PostgreSQL 上显式设置 `POKER_TEST_DB_URL`、`POKER_TEST_DB_USERNAME` 和 `POKER_TEST_DB_PASSWORD` 来启用本地 runner；这些变量和凭据只能保存在本地环境，不能提交。
+
+六人恢复场景可单独运行：
+
+```powershell
+backend\mvnw.cmd -f backend\pom.xml -Dtest=TournamentRecoveryEndToEndTest test
+```
+
+该测试对每条命令重建 `TournamentCommandService`，使用按手牌编号固定的牌堆序列和优先 CHECK/CALL、否则 ALL_IN 的服务端合法动作策略。它在每一步检查事件序号无缺口，并按领域约定将当前手牌已投入筹码与座位筹码相加，验证总额始终为 60,000。
 
 性质校验由 JUnit Jupiter 确定性执行。六项校验分别运行 500 个固定且互不相同的场景种子；一旦失败，错误信息会包含可复现该问题的种子。当前测试框架不提供自动收缩。
 
