@@ -1,6 +1,7 @@
 package com.agenttavern.persistence;
 
 import com.agenttavern.game.hand.HandId;
+import com.agenttavern.tournament.Tournament;
 import com.agenttavern.tournament.TournamentCheckpoint;
 import com.agenttavern.tournament.TournamentEventEnvelope;
 import com.agenttavern.tournament.TournamentId;
@@ -13,18 +14,16 @@ import com.agenttavern.tournament.port.TournamentWriteResult.WriteStatus;
 import java.time.Instant;
 import java.util.ConcurrentModificationException;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 
 /** PostgreSQL implementation of the tournament persistence port. */
-public final class JdbcTournamentStore implements TournamentStore {
+public class JdbcTournamentStore implements TournamentStore {
 
     private static final String LOAD_SQL = """
             select t.tournament_id, t.mode, t.status, t.version, t.last_sequence,
@@ -130,6 +129,9 @@ public final class JdbcTournamentStore implements TournamentStore {
         }
 
         Optional<StoredTournament> current = load(tournamentId);
+        if (!matchesExpectedVersion(commit.expectedVersion(), current.orElse(null))) {
+            return duplicateOrConflict(tournamentId, commit.commandId());
+        }
         CommitState state = validate(commit, current.orElse(null));
         int changed = current.isEmpty()
                 ? insertTournament(commit.checkpoint(), state)
@@ -364,14 +366,7 @@ public final class JdbcTournamentStore implements TournamentStore {
 
     private CommitState validate(TournamentCommit commit, StoredTournament current) {
         TournamentCheckpoint checkpoint = commit.checkpoint();
-        validateCheckpointSeats(checkpoint);
-        if (current == null) {
-            if (commit.expectedVersion() != 0) {
-                throw new ConcurrentModificationException("tournament does not exist");
-            }
-        } else if (current.version() != commit.expectedVersion()) {
-            throw new ConcurrentModificationException("tournament version has changed");
-        }
+        Tournament.restore(checkpoint);
         long nextVersion = Math.incrementExact(commit.expectedVersion());
         long sequence = current == null ? 0 : current.lastSequence();
         for (TournamentEventEnvelope event : commit.events()) {
@@ -391,35 +386,8 @@ public final class JdbcTournamentStore implements TournamentStore {
         return new CommitState(commit.expectedVersion(), nextVersion, sequence);
     }
 
-    private void validateCheckpointSeats(TournamentCheckpoint checkpoint) {
-        if (checkpoint.seats().size() != 6) {
-            throw new IllegalArgumentException("checkpoint must contain exactly six seats");
-        }
-        Set<Integer> indexes = new HashSet<>();
-        Set<UUID> players = new HashSet<>();
-        for (TournamentSeat seat : checkpoint.seats()) {
-            if (!indexes.add(seat.seatIndex()) || !players.add(seat.playerId().value())) {
-                throw new IllegalArgumentException("checkpoint seats must have unique players and indexes");
-            }
-            if (seat.seatIndex() < 0 || seat.seatIndex() > 5) {
-                throw new IllegalArgumentException("checkpoint seat index must be between zero and five");
-            }
-        }
-        for (int index = 0; index < 6; index++) {
-            if (!indexes.contains(index)) {
-                throw new IllegalArgumentException("checkpoint must occupy seat indexes zero through five");
-            }
-        }
-        if (!players.containsAll(checkpoint.currentHandStartingStacks().keySet().stream()
-                .map(player -> player.value())
-                .toList())) {
-            throw new IllegalArgumentException("starting stack players must belong to the checkpoint");
-        }
-        checkpoint.currentHandStartingStacks().forEach((player, stack) -> {
-            if (stack < 0) {
-                throw new IllegalArgumentException("starting stack must be non-negative");
-            }
-        });
+    private boolean matchesExpectedVersion(long expectedVersion, StoredTournament current) {
+        return current == null ? expectedVersion == 0 : current.version() == expectedVersion;
     }
 
     private TournamentEventEnvelope event(Map<String, Object> row) {

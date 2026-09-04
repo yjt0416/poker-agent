@@ -1,13 +1,14 @@
 package com.agenttavern.persistence;
 
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Wires persistence only after JDBC infrastructure exists, keeping DB-free application tests isolated. */
-@Configuration(proxyBeanMethods = false)
+@AutoConfiguration(after = JdbcClientAutoConfiguration.class)
 @ConditionalOnBean(JdbcClient.class)
 public class PersistenceConfiguration {
 
