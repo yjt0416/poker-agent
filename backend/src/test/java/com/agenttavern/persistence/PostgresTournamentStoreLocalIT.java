@@ -4,6 +4,7 @@ import com.agenttavern.AgentTavernApplication;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -23,6 +24,8 @@ class PostgresTournamentStoreLocalIT extends PostgresTournamentStoreContract {
 }
 
 final class ExternalPostgresTestDatabase {
+
+    private static final Pattern TEST_DATABASE_TOKEN = Pattern.compile("(?:^|[_-])(?:test|it)(?:[_-]|$)");
 
     private ExternalPostgresTestDatabase() {}
 
@@ -53,8 +56,9 @@ final class ExternalPostgresTestDatabase {
             throw new IllegalArgumentException("POKER_TEST_DB_URL must name one database");
         }
         String database = path.substring(1).toLowerCase(Locale.ROOT);
-        if (!database.contains("test") && !database.contains("_it_")) {
-            throw new IllegalArgumentException("POKER_TEST_DB_URL database name must clearly be test-only");
+        if (!TEST_DATABASE_TOKEN.matcher(database).find()) {
+            throw new IllegalArgumentException(
+                    "POKER_TEST_DB_URL database name must contain test or it as a separate token");
         }
     }
 

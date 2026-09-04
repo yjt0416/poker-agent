@@ -164,6 +164,27 @@ abstract class PostgresTournamentStoreContract {
     }
 
     @Test
+    void storeDuplicateCommitReturnsAlreadyAppliedOriginalReceiptAfterALaterCommand() {
+        TournamentId tournamentId = newTournamentId();
+        commandService().create(createCommand(UUID.randomUUID(), tournamentId));
+        TournamentCommit originalCommand = actionCommit(
+                tournamentStore.load(tournamentId).orElseThrow(), UUID.randomUUID());
+
+        TournamentWriteResult original = tournamentStore.commit(originalCommand);
+        TournamentWriteResult later = tournamentStore.commit(
+                actionCommit(original.storedTournament(), UUID.randomUUID()));
+        TournamentWriteResult duplicate = tournamentStore.commit(originalCommand);
+
+        assertThat(original.status()).isEqualTo(WriteStatus.APPLIED);
+        assertThat(later.status()).isEqualTo(WriteStatus.APPLIED);
+        assertThat(duplicate.status()).isEqualTo(WriteStatus.ALREADY_APPLIED);
+        assertThat(duplicate.storedTournament()).isEqualTo(original.storedTournament());
+        assertThat(duplicate.events()).isEqualTo(original.events());
+        assertThat(tournamentStore.load(tournamentId).orElseThrow())
+                .isEqualTo(later.storedTournament());
+    }
+
+    @Test
     void eventsAfterIsStrictlyOrderedAndGapFree() {
         TournamentId tournamentId = newTournamentId();
         TournamentExecution created = commandService().create(createCommand(UUID.randomUUID(), tournamentId));
