@@ -1,10 +1,34 @@
 # 德州扑克引擎与锦标赛指南
 
-本模块包含 Agent Tavern 已完成的两个后端阶段：确定性的德州扑克规则引擎，以及六人单桌锦标赛的持久化与宕机恢复能力。
+本模块包含 Agent Tavern 的服务端权威德州扑克引擎、六人单桌锦标赛、持久化恢复、公开脱敏 API、Agent 自动行动和 DeepSeek 兼容适配器。
 
 第一阶段提供下注、摊牌、领域事件和质量守卫。第二阶段提供 6 人各 10,000 筹码、盲注升级、按钮轮转、淘汰排名、不可变检查点、连续事件流、幂等命令回执及 `TournamentStore` 的 PostgreSQL/JDBC 实现；结构由 Flyway 管理。
 
-它还不是完整游戏产品：浏览器前端、HTTP/WebSocket API、Agent 编排和 DeepSeek/其他 LLM 集成尚未实现。
+默认 `local` profile 使用内存存储，可零配置运行；`postgres` profile 使用 JDBC/Flyway 持久化。HTTP API 已可供 React 牌桌使用，WebSocket 推送与完整观战模式仍在后续阶段。
+
+## 本地启动与 API
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+主要端点：
+
+- `POST /api/tables`：创建玩家对 Agent 的匿名牌桌并设置 HttpOnly 会话 Cookie；
+- `GET /api/tables/current`：读取当前玩家的脱敏牌桌投影；
+- `POST /api/tables/current/actions`：提交 `FOLD`、`CHECK`、`CALL`、`RAISE` 或 `ALL_IN`；
+- `POST /api/tables/current/chat`：提交经过安全策略处理的牌桌发言；
+- `POST /api/tables/current/next-hand`：在手牌结束后开始下一手牌。
+
+启用 DeepSeek：
+
+```powershell
+$env:AGENT_TAVERN_AGENT_PROVIDER="deepseek"
+$env:DEEPSEEK_API_KEY="<你的新密钥>"
+.\mvnw.cmd spring-boot:run
+```
+
+任何密钥都不得写入 `application.yml`、测试、日志或提交历史。
 
 ## 锦标赛恢复与隐私边界
 

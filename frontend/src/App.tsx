@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { enterTable, startNextHand, submitAction, submitTalk, type TableView } from './api'
 import { AgentSeatView } from './components/AgentSeatView'
 import { Avatar } from './components/Avatar'
 import { PlayingCardView } from './components/PlayingCardView'
@@ -14,7 +15,7 @@ import {
   type TableLog,
 } from './game-demo'
 
-type PlayerAction = '弃牌' | '过牌' | '跟注' | '加注'
+type PlayerAction = '弃牌' | '过牌' | '跟注' | '加注' | '全下'
 
 const aiResponses = [
   { id: 'vesper', action: '跟注 300', line: '“有意思。你讲的故事，我暂时愿意听下去。”', tone: 'blue' as const },
@@ -35,11 +36,40 @@ export function App() {
   const [playerCards, setPlayerCards] = useState<PlayingCard[]>(holeCards)
   const [board, setBoard] = useState<PlayingCard[]>(communityCards)
   const [roundDone, setRoundDone] = useState(false)
+  const [serverTable, setServerTable] = useState<TableView | null>(null)
+  const [connection, setConnection] = useState<'connecting' | 'online' | 'demo'>('connecting')
+  const [notice, setNotice] = useState('正在进入酒馆……')
   const timers = useRef<number[]>([])
 
-  useEffect(() => () => timers.current.forEach(window.clearTimeout), [])
+  useEffect(() => {
+    let cancelled = false
+    enterTable()
+      .then((view) => {
+        if (cancelled) return
+        hydrate(view)
+        setConnection('online')
+        setNotice('Java 对局服务已连接')
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setConnection('demo')
+        setNotice(`演示模式 · ${error instanceof Error ? error.message : 'Java 后端未连接'}`)
+      })
+    return () => {
+      cancelled = true
+      timers.current.forEach(window.clearTimeout)
+    }
+  }, [])
 
   const activePlayers = useMemo(() => agents.filter((agent) => !agent.folded).length + (roundDone ? 0 : 1), [agents, roundDone])
+  const legalTypes = serverTable?.legalActions.types ?? ['FOLD', 'CALL', 'RAISE']
+  const canCheck = legalTypes.includes('CHECK')
+  const canCall = legalTypes.includes('CALL')
+  const canRaise = legalTypes.includes('RAISE')
+  const canAllIn = legalTypes.includes('ALL_IN')
+  const callAmount = serverTable?.legalActions.callAmount ?? 150
+  const maxRaise = serverTable?.legalActions.maxRaiseTo || stack
+  const streetLabel = toStreetLabel(serverTable?.street ?? 'FLOP')
 
   function appendLog(name: string, action: string, detail: string, tone: TableLog['tone']) {
     setLogs((current) => [...current, { id: Date.now() + Math.random(), name, action, detail, tone }].slice(-8))
@@ -64,7 +94,66 @@ export function App() {
     timers.current.push(timer)
   }
 
-  function act(action: PlayerAction) {
+  function hydrate(view: TableView) {
+    const positions = ['seat-left', 'seat-top', 'seat-right-top', 'seat-right', 'seat-left-bottom']
+    setServerTable(view)
+    setAgents(view.seats.filter((seat) => !seat.self).map((seat) => ({
+      id: seat.persona,
+      name: seat.name,
+      subtitle: personaSubtitle(seat.persona),
+      stack: seat.stack,
+      bet: seat.streetCommitted,
+      mood: seat.status,
+      sprite: seat.sprite,
+      seat: positions[seat.seat] ?? positions[0],
+      folded: ['FOLDED', 'OUT', 'ELIMINATED'].includes(seat.status),
+      dealer: seat.seat === view.buttonSeat,
+    })))
+    const self = view.seats.find((seat) => seat.self)
+    setStack(self?.stack ?? 0)
+    setPot(view.pot)
+    setHand(view.handNumber)
+    setPlayerCards(view.holeCards)
+    setBoard(view.board)
+    setRoundDone(view.status !== 'IN_HAND')
+    setRaise(view.legalActions.minRaiseTo ?? view.legalActions.maxRaiseTo)
+    setLogs(view.actionLog.map((entry) => ({
+      id: entry.sequence,
+      name: entry.name,
+      action: entry.action,
+      detail: entry.summary,
+      tone: toneForAction(entry.action),
+    })))
+    const latestChat = view.chat.at(-1)
+    const latestAction = view.actionLog.at(-1)
+    if (latestChat) setLastSpeech(`“${latestChat.text}” — ${latestChat.name}`)
+    else if (latestAction) setLastSpeech(latestAction.summary)
+  }
+
+  async function act(action: PlayerAction) {
+    if (connection !== 'online') {
+      actDemo(action)
+      return
+    }
+    if (thinking || roundDone) return
+    const type = action === '弃牌' ? 'FOLD'
+      : action === '过牌' ? 'CHECK'
+        : action === '跟注' ? 'CALL'
+          : action === '全下' ? 'ALL_IN' : 'RAISE'
+    setThinking(true)
+    setNotice('对手正在分析牌局与发言……')
+    try {
+      const view = await submitAction(type, type === 'RAISE' ? raise : type === 'ALL_IN' ? maxRaise : undefined)
+      hydrate(view)
+      setNotice('Java 对局服务已连接')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '行动提交失败')
+    } finally {
+      setThinking(false)
+    }
+  }
+
+  function actDemo(action: PlayerAction) {
     if (thinking || roundDone) return
     let amount = 0
     let detail = chat.trim() ? `“${chat.trim()}”` : '你把目光投向牌桌中央。'
@@ -83,15 +172,40 @@ export function App() {
     if (action !== '弃牌') resolveAiTurn(logs.length)
   }
 
-  function sendTableTalk() {
+  async function sendTableTalk() {
     const value = chat.trim()
     if (!value || thinking) return
+    if (connection === 'online') {
+      setThinking(true)
+      try {
+        hydrate(await submitTalk(value))
+        setChat('')
+        setNotice('你的话已经传到整张牌桌')
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : '发言发送失败')
+      } finally {
+        setThinking(false)
+      }
+      return
+    }
     appendLog('你', '牌桌发言', `“${value}”`, 'gold')
     setLastSpeech('薇斯珀眯起眼睛，像是在重新衡量你的下注范围。')
     setChat('')
   }
 
-  function dealNextHand() {
+  async function dealNextHand() {
+    if (connection === 'online') {
+      setThinking(true)
+      try {
+        hydrate(await startNextHand())
+        setNotice('新一手牌已经开始')
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : '无法开始下一手牌')
+      } finally {
+        setThinking(false)
+      }
+      return
+    }
     const nextHand = hand + 1
     const next = nextDemoHand(nextHand)
     setHand(nextHand)
@@ -120,7 +234,7 @@ export function App() {
           <h1>无上限德州扑克</h1>
         </div>
         <div className="header-actions">
-          <span className="connection"><i /> 本地演示已连接</span>
+          <span className={`connection connection-${connection}`}><i /> {notice}</span>
           <button className="icon-button" aria-label="游戏设置">⚙</button>
         </div>
       </header>
@@ -130,8 +244,8 @@ export function App() {
           <PanelTitle icon="♜" title="本桌情报" subtitle="TABLE INTEL" />
           <dl className="stats-grid">
             <div><dt>牌局</dt><dd>第 {hand} 手牌</dd></div>
-            <div><dt>阶段</dt><dd className="accent">翻牌圈</dd></div>
-            <div><dt>盲注</dt><dd>50 / 100</dd></div>
+            <div><dt>阶段</dt><dd className="accent">{streetLabel}</dd></div>
+            <div><dt>盲注</dt><dd>{serverTable?.blinds.small ?? 50} / {serverTable?.blinds.big ?? 100}</dd></div>
             <div><dt>在局</dt><dd>{activePlayers} / 6</dd></div>
           </dl>
 
@@ -163,7 +277,7 @@ export function App() {
               <PlayingCardView hidden />
               <PlayingCardView hidden />
             </div>
-            <div className="round-marker"><span>翻牌圈</span><i /><i /><i className="muted" /><i className="muted" /></div>
+            <div className="round-marker"><span>{streetLabel}</span><i /><i /><i className="muted" /><i className="muted" /></div>
           </div>
 
           {agents.map((agent) => <AgentSeatView agent={agent} key={agent.id} />)}
@@ -191,15 +305,15 @@ export function App() {
               <>
                 <div className="turn-meta"><span>轮到你行动</span><b>{thinking ? 'AI 思考中…' : '剩余 28 秒'}</b></div>
                 <div className="action-buttons">
-                  <button className="action-button fold" onClick={() => act('弃牌')} disabled={thinking}><span>弃牌</span><small>FOLD · F</small></button>
-                  <button className="action-button check" onClick={() => act('跟注')} disabled={thinking}><span>跟注 150</span><small>CALL · C</small></button>
-                  <button className="action-button raise" onClick={() => act('加注')} disabled={thinking}><span>加注 {raise}</span><small>RAISE · R</small></button>
+                  <button className="action-button fold" onClick={() => act('弃牌')} disabled={thinking || !legalTypes.includes('FOLD')}><span>弃牌</span><small>FOLD · F</small></button>
+                  <button className="action-button check" onClick={() => act(canCheck ? '过牌' : '跟注')} disabled={thinking || (!canCheck && !canCall)}><span>{canCheck ? '过牌' : `跟注 ${callAmount}`}</span><small>{canCheck ? 'CHECK' : 'CALL'} · C</small></button>
+                  <button className="action-button raise" onClick={() => act(canRaise ? '加注' : '全下')} disabled={thinking || (!canRaise && !canAllIn)}><span>{canRaise ? `加注 ${raise}` : '全下'}</span><small>{canRaise ? 'RAISE' : 'ALL IN'} · R</small></button>
                 </div>
                 <div className="raise-control">
                   <button onClick={() => setRaise(300)}>2×</button>
                   <button onClick={() => setRaise(450)}>3×</button>
-                  <input aria-label="加注金额" type="range" min="300" max={Math.max(300, stack)} step="50" value={raise} onChange={(event) => setRaise(Number(event.target.value))} />
-                  <button onClick={() => setRaise(stack)}>全下</button>
+                  <input aria-label="加注金额" type="range" min={serverTable?.legalActions.minRaiseTo ?? 300} max={Math.max(serverTable?.legalActions.minRaiseTo ?? 300, maxRaise)} step="50" value={raise} onChange={(event) => setRaise(Number(event.target.value))} disabled={!canRaise} />
+                  <button onClick={() => setRaise(maxRaise)} disabled={!canAllIn}>全下</button>
                 </div>
               </>
             )}
@@ -239,8 +353,8 @@ export function App() {
       </section>
 
       <footer className="statusbar">
-        <span><i className="online-dot" />离线决策引擎</span>
-        <span>演示模式 · 后端实时 API 接入中</span>
+        <span><i className="online-dot" />{connection === 'online' ? 'Java 权威对局引擎' : '离线演示引擎'}</span>
+        <span>{connection === 'online' ? `安全会话 · 版本 ${serverTable?.version ?? 0}` : '演示模式 · 请启动 Java 后端'}</span>
         <span>Agent Tavern α</span>
       </footer>
     </main>
@@ -249,4 +363,26 @@ export function App() {
 
 function PanelTitle({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
   return <div className="panel-title"><span>{icon}</span><div><b>{title}</b><small>{subtitle}</small></div></div>
+}
+
+function toneForAction(action: string): TableLog['tone'] {
+  if (action.includes('弃牌')) return 'green'
+  if (action.includes('加注') || action.includes('全下')) return 'red'
+  if (action.includes('过牌')) return 'blue'
+  return 'gold'
+}
+
+function personaSubtitle(persona: string) {
+  return ({
+    vesper: '狡黠诈术师',
+    hogarth: '激进赌徒',
+    mirelle: '冷静分析师',
+    bruno: '强硬老兵',
+    bunji: '谨慎猎手',
+  } as Record<string, string>)[persona] ?? '神秘牌手'
+}
+
+function toStreetLabel(street: string) {
+  return ({ PREFLOP: '翻牌前', FLOP: '翻牌圈', TURN: '转牌圈', RIVER: '河牌圈',
+    SHOWDOWN: '摊牌', BETWEEN_HANDS: '手牌结束', COMPLETE: '锦标赛结束' } as Record<string, string>)[street] ?? street
 }

@@ -24,7 +24,7 @@ class ArchitectureTest {
         assertThat(modules.stream().map(ApplicationModule::getIdentifier))
                 .extracting(Object::toString)
                 .containsExactlyInAnyOrder(
-                        "game", "tournament", "persistence", "agents", "tablechat", "llmprovider");
+                        "game", "tournament", "persistence", "agents", "tablechat", "llmprovider", "web");
         assertThat(game.isOpen()).isFalse();
         assertThat(game.getNamedInterfaces().stream()
                 .filter(NamedInterface::isNamed)
@@ -52,6 +52,9 @@ class ArchitectureTest {
                 .contains("agents", "tablechat", "game :: betting", "game :: card");
         assertThat(moduleNamed(modules, "persistence").getAllowedDependencies(modules).toString())
                 .contains("tournament", "tournament :: port", "game :: betting", "game :: hand");
+        assertThat(moduleNamed(modules, "web").getAllowedDependencies(modules).toString())
+                .contains("agents", "tablechat", "tournament", "tournament :: application",
+                        "tournament :: port", "game :: betting", "game :: card", "game :: hand");
     }
 
     private static ApplicationModule moduleNamed(ApplicationModules modules, String name) {

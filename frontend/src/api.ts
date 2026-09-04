@@ -1,0 +1,106 @@
+import type { PlayingCard } from './game-demo'
+
+export type TableView = {
+  tableId: string
+  version: number
+  mode: 'PLAYER' | 'SPECTATOR'
+  status: 'IN_HAND' | 'BETWEEN_HANDS' | 'COMPLETE'
+  handNumber: number
+  street: string
+  pot: number
+  buttonSeat: number
+  actorSeat: number | null
+  selfSeat: number
+  blinds: { small: number; big: number }
+  seats: Array<{
+    seat: number
+    name: string
+    persona: string
+    sprite: number
+    stack: number
+    streetCommitted: number
+    handCommitted: number
+    status: string
+    self: boolean
+  }>
+  board: PlayingCard[]
+  holeCards: PlayingCard[]
+  legalActions: {
+    types: string[]
+    callAmount: number
+    minRaiseTo: number | null
+    maxRaiseTo: number
+  }
+  actionLog: Array<{
+    sequence: number
+    seat: number
+    name: string
+    action: string
+    summary: string
+  }>
+  chat: Array<{
+    seat: number
+    name: string
+    text: string
+    occurredAt: string
+  }>
+}
+
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+  }
+}
+
+async function request(path: string, init?: RequestInit): Promise<TableView> {
+  const response = await fetch(path, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    ...init,
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { message?: string }
+    throw new ApiError(response.status, body.message ?? `牌桌服务暂时不可用（HTTP ${response.status}）`)
+  }
+  return response.json() as Promise<TableView>
+}
+
+let pendingEntry: Promise<TableView> | undefined
+
+export function enterTable(): Promise<TableView> {
+  if (pendingEntry) return pendingEntry
+  pendingEntry = enterTableOnce().finally(() => {
+    pendingEntry = undefined
+  })
+  return pendingEntry
+}
+
+async function enterTableOnce(): Promise<TableView> {
+  try {
+    return await request('/api/tables/current')
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) throw error
+    return request('/api/tables', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: '旅人' }),
+    })
+  }
+}
+
+export function submitAction(type: string, amount?: number) {
+  return request('/api/tables/current/actions', {
+    method: 'POST',
+    body: JSON.stringify({ type, amount }),
+  })
+}
+
+export function submitTalk(text: string) {
+  return request('/api/tables/current/chat', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  })
+}
+
+export function startNextHand() {
+  return request('/api/tables/current/next-hand', { method: 'POST', body: '{}' })
+}

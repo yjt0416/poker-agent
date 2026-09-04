@@ -1,7 +1,12 @@
 spring:
-  datasource:
-    url: ${DATABASE_URL}
-    username: ${DATABASE_USERNAME}
-    password: ${DATABASE_PASSWORD}
-  flyway:
-    enabled: true
+  profiles:
+    default: local
+
+agent-tavern:
+  cors-origins: ${AGENT_TAVERN_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  agent-provider: ${AGENT_TAVERN_AGENT_PROVIDER:local}
+  deepseek:
+    api-key: ${DEEPSEEK_API_KEY:}
+    base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+    model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+    timeout: ${DEEPSEEK_TIMEOUT:20s}
