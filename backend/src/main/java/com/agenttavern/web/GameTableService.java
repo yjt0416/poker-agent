@@ -18,6 +18,7 @@ import com.agenttavern.game.card.Rank;
 import com.agenttavern.game.card.Suit;
 import com.agenttavern.game.hand.Hand;
 import com.agenttavern.game.hand.HandCheckpoint;
+import com.agenttavern.game.hand.HandEvent;
 import com.agenttavern.game.hand.HandId;
 import com.agenttavern.tablechat.TableChatMessage;
 import com.agenttavern.tablechat.TableChatPolicy;
@@ -25,6 +26,7 @@ import com.agenttavern.tablechat.TableChatService;
 import com.agenttavern.tournament.Tournament;
 import com.agenttavern.tournament.TournamentEntrant;
 import com.agenttavern.tournament.TournamentId;
+import com.agenttavern.tournament.TournamentEvent;
 import com.agenttavern.tournament.TournamentMode;
 import com.agenttavern.tournament.TournamentStatus;
 import com.agenttavern.tournament.application.ActInTournamentCommand;
@@ -100,10 +102,12 @@ public class GameTableService {
         RuntimeTable table = requireTable(token);
         synchronized (table) {
             requireHumanTurn(table);
-            PlayerAction action = parseAction(request, currentHand(table.execution).legalActions());
+            Hand hand = currentHand(table.execution);
+            PlayerAction action = parseAction(request, hand.legalActions());
             table.execution = commands.act(new ActInTournamentCommand(
                     UUID.randomUUID(), table.id, table.execution.version(), table.humanId, action));
             table.addAction(HUMAN_SEAT, table.displayName, describe(action), "玩家行动");
+            recordSettlement(table, hand);
             advanceAgents(table);
             return project(table);
         }
@@ -128,6 +132,8 @@ public class GameTableService {
             }
             table.execution = commands.startNextHand(new StartNextHandCommand(
                     UUID.randomUUID(), table.id, table.execution.version(), HandId.random()));
+            table.lastBoard = List.of();
+            table.lastHumanHoleCards = List.of();
             table.addAction(-1, "茶馆荷官", "开始第 "
                     + (table.execution.checkpoint().completedHands() + 1) + " 手牌", "盲注已下，卡牌已发出");
             if (table.humanId != null) advanceAgents(table);
@@ -173,6 +179,7 @@ public class GameTableService {
                 UUID.randomUUID(), table.id, table.execution.version(), actor, decision.action()));
         AgentPersona persona = personaForSeat(seat);
         table.addAction(seat, persona.name(), describe(decision.action()), decision.publicSummary());
+        recordSettlement(table, hand);
         if (!decision.tableTalk().isBlank()) {
             try {
                 String safeTalk = TableChatPolicy.normalize(decision.tableTalk());
@@ -183,6 +190,35 @@ public class GameTableService {
             }
         }
         table.trimHistory();
+    }
+
+    private static void recordSettlement(RuntimeTable table, Hand completedHand) {
+        table.execution.events().stream()
+                .map(event -> event.payload())
+                .filter(TournamentEvent.HandEventRecorded.class::isInstance)
+                .map(TournamentEvent.HandEventRecorded.class::cast)
+                .map(TournamentEvent.HandEventRecorded::handEvent)
+                .filter(HandEvent.PotsAwarded.class::isInstance)
+                .map(HandEvent.PotsAwarded.class::cast)
+                .findFirst()
+                .ifPresent(awarded -> {
+                    table.lastBoard = List.copyOf(completedHand.board());
+                    table.lastHumanHoleCards = table.humanId == null
+                            ? List.of() : List.copyOf(completedHand.holeCards(table.humanId));
+                    List<String> winners = awarded.payouts().entrySet().stream()
+                            .map(entry -> winnerName(table, entry.getKey()) + "收下 " + entry.getValue() + " 筹码")
+                            .toList();
+                    int winnerSeat = awarded.payouts().size() == 1
+                            ? table.players.indexOf(awarded.payouts().keySet().iterator().next()) : -1;
+                    table.addAction(winnerSeat, "茶馆荷官", "本手结算", String.join("，", winners) + "。");
+                });
+    }
+
+    private static String winnerName(RuntimeTable table, PlayerId playerId) {
+        int seat = table.players.indexOf(playerId);
+        if (seat < 0) return "未知牌手";
+        if (table.humanId != null && playerId.equals(table.humanId)) return table.displayName;
+        return personaForSeat(seat).name();
     }
 
     private AgentObservation observation(RuntimeTable table, Hand hand, PlayerId actor, int seat) {
@@ -221,9 +257,11 @@ public class GameTableService {
                 }).toList();
 
         Integer actorSeat = hand == null ? null : hand.actor().seatIndex();
-        List<TableView.CardView> board = hand == null ? List.of() : hand.board().stream().map(GameTableService::card).toList();
-        List<TableView.CardView> hole = hand == null || table.humanId == null
-                ? List.of() : hand.holeCards(table.humanId).stream().map(GameTableService::card).toList();
+        List<TableView.CardView> board = (hand == null ? table.lastBoard : hand.board()).stream()
+                .map(GameTableService::card).toList();
+        List<TableView.CardView> hole = table.humanId == null ? List.of()
+                : (hand == null ? table.lastHumanHoleCards : hand.holeCards(table.humanId)).stream()
+                        .map(GameTableService::card).toList();
         TableView.LegalActionView legal = hand != null && table.humanId != null && hand.actor().playerId().equals(table.humanId)
                 ? legal(hand.legalActions()) : TableView.LegalActionView.none();
         long pot = hand == null ? 0 : hand.seats().stream().mapToLong(SeatState::handCommitted).sum();
@@ -234,7 +272,8 @@ public class GameTableService {
         }).toList();
 
         return new TableView(checkpoint.id().value().toString(), table.execution.version(), checkpoint.mode().name(),
-                checkpoint.status().name(), checkpoint.completedHands() + 1,
+                checkpoint.status().name(), hand == null
+                        ? Math.max(1, checkpoint.completedHands()) : checkpoint.completedHands() + 1,
                 hand == null ? checkpoint.status().name() : hand.street().name(), pot,
                 checkpoint.buttonSeat(), actorSeat, table.humanId == null ? -1 : HUMAN_SEAT,
                 new TableView.BlindView(checkpoint.currentHand().map(value -> value.blinds().smallBlind())
@@ -353,6 +392,8 @@ public class GameTableService {
         private final List<PlayerId> players;
         private final List<TableView.ActionLogView> actions = new ArrayList<>();
         private final List<TableChatMessage> chat = new ArrayList<>();
+        private List<Card> lastBoard = List.of();
+        private List<Card> lastHumanHoleCards = List.of();
         private TournamentExecution execution;
         private long actionSequence;
 

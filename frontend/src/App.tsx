@@ -76,6 +76,7 @@ export function App() {
   const activePlayers = useMemo(() => serverTable
     ? serverTable.seats.filter((seat) => !['FOLDED', 'OUT', 'ELIMINATED'].includes(seat.status)).length
     : agents.filter((agent) => !agent.folded).length + (roundDone ? 0 : 1), [agents, roundDone, serverTable])
+  const handResult = useMemo(() => [...logs].reverse().find((log) => log.action === '本手结算'), [logs])
   const legalTypes = serverTable?.legalActions.types ?? ['FOLD', 'CALL', 'RAISE']
   const canCheck = legalTypes.includes('CHECK')
   const canCall = legalTypes.includes('CALL')
@@ -334,13 +335,17 @@ export function App() {
             <div className="pot-pill"><i className="gold-chip" /><span>底池</span><b>{formatChips(pot)}</b></div>
             <div className="community-cards">
               {board.map((card, index) => <PlayingCardView key={`${card.rank}${card.suit}`} card={card} glowing={index === 2} />)}
-              <PlayingCardView hidden />
-              <PlayingCardView hidden />
+              {Array.from({ length: Math.max(0, 5 - board.length) }, (_, index) => <PlayingCardView hidden key={`hidden-${index}`} />)}
             </div>
             <div className="round-marker"><span>{streetLabel}</span>{[0, 1, 2, 3].map((step) => <i className={step <= streetStep(serverTable?.street ?? 'FLOP') ? 'active' : ''} key={step} />)}</div>
           </div>
 
           {agents.map((agent) => <AgentSeatView agent={agent} key={agent.id} />)}
+
+          {roundDone && handResult && <div className="hand-result" role="status">
+            <span>本手落定</span>
+            <strong>{handResult.detail}</strong>
+          </div>}
 
           <div className="agent-speech" aria-live="polite">
             <Avatar sprite={lastSpeaker.sprite} name={lastSpeaker.name} />

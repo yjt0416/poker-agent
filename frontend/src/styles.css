@@ -160,6 +160,10 @@ button { color: inherit; }
 .agent-speech p { margin:0; color:#a79986; font-size:9px; line-height:1.5; }
 .spectator-mode .agent-speech { left:2%; bottom:3%; width:300px; }
 .spectator-mode .action-dock { right:2%; }
+.hand-result { position:absolute; z-index:13; left:50%; top:61%; width:310px; padding:12px 20px; transform:translate(-50%,-50%); text-align:center; border:1px solid rgba(224,178,94,.5); background:linear-gradient(135deg,rgba(52,35,18,.96),rgba(13,11,8,.97)); box-shadow:0 12px 35px rgba(0,0,0,.62),inset 0 0 18px rgba(213,159,72,.08); clip-path:polygon(5% 0,95% 0,100% 25%,100% 75%,95% 100%,5% 100%,0 75%,0 25%); animation:result-in .35s ease-out; }
+.hand-result span { display:block; color:#8e7655; font-size:8px; letter-spacing:.28em; }
+.hand-result strong { display:block; margin-top:5px; color:#f0ce8c; font-size:12px; font-weight:600; }
+@keyframes result-in { from { opacity:0; transform:translate(-50%,-45%) scale(.94); } }
 
 .hero-seat { position:absolute; z-index:11; left:50%; bottom:70px; transform:translateX(-50%); width:250px; }
 .hero-cards { position:absolute; z-index:1; left:50%; bottom:58px; transform:translateX(-50%); display:flex; }

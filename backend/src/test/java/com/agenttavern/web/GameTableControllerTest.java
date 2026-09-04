@@ -15,11 +15,13 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 class GameTableControllerTest {
     @Autowired MockMvc mvc;
+    @Autowired JsonMapper json;
 
     @Test
     void createsPlayableSessionAndReturnsOnlyTheHumansPrivateCards() throws Exception {
@@ -75,9 +77,21 @@ class GameTableControllerTest {
                 .andReturn();
         Cookie session = created.getResponse().getCookie(GameTableController.SESSION_COOKIE);
 
-        mvc.perform(post("/api/tables/current/advance").cookie(session))
+        MvcResult advanced = mvc.perform(post("/api/tables/current/advance").cookie(session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.holeCards.length()").value(0))
-                .andExpect(jsonPath("$.actionLog.length()").value(1));
+                .andExpect(jsonPath("$.actionLog.length()").value(1))
+                .andReturn();
+
+        for (int turn = 0; turn < 100
+                && "IN_HAND".equals(json.readTree(advanced.getResponse().getContentAsString()).path("status").asText());
+                turn++) {
+            advanced = mvc.perform(post("/api/tables/current/advance").cookie(session))
+                    .andExpect(status().isOk())
+                    .andReturn();
+        }
+        String completed = advanced.getResponse().getContentAsString();
+        assertThat(json.readTree(completed).path("status").asText()).isNotEqualTo("IN_HAND");
+        assertThat(completed).contains("本手结算", "茶馆荷官");
     }
 }
