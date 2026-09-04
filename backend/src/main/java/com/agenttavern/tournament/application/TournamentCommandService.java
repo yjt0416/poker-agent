@@ -61,7 +61,10 @@ public final class TournamentCommandService {
         }
 
         if (store.load(command.tournamentId()).isPresent()) {
-            throw new ConcurrentTournamentUpdateException(command.tournamentId(), 0);
+            return rereadReceiptOrThrow(
+                    command.tournamentId(),
+                    command.commandId(),
+                    new ConcurrentTournamentUpdateException(command.tournamentId(), 0));
         }
         TournamentTransition transition = Tournament.start(
                 command.tournamentId(),
@@ -79,7 +82,12 @@ public final class TournamentCommandService {
             return receipt.get();
         }
 
-        StoredTournament storedTournament = loadExpected(command.tournamentId(), command.expectedVersion());
+        StoredTournament storedTournament;
+        try {
+            storedTournament = loadExpected(command.tournamentId(), command.expectedVersion());
+        } catch (TournamentNotFoundException | ConcurrentTournamentUpdateException exception) {
+            return rereadReceiptOrThrow(command.tournamentId(), command.commandId(), exception);
+        }
         TournamentTransition transition = Tournament.restore(storedTournament.checkpoint())
                 .act(command.actorId(), command.action());
         return commit(command.commandId(), storedTournament.version(), storedTournament.lastSequence(), transition);
@@ -91,7 +99,12 @@ public final class TournamentCommandService {
             return receipt.get();
         }
 
-        StoredTournament storedTournament = loadExpected(command.tournamentId(), command.expectedVersion());
+        StoredTournament storedTournament;
+        try {
+            storedTournament = loadExpected(command.tournamentId(), command.expectedVersion());
+        } catch (TournamentNotFoundException | ConcurrentTournamentUpdateException exception) {
+            return rereadReceiptOrThrow(command.tournamentId(), command.commandId(), exception);
+        }
         TournamentTransition transition = Tournament.restore(storedTournament.checkpoint())
                 .startNextHand(command.handId(), deckSupplier.get());
         return commit(command.commandId(), storedTournament.version(), storedTournament.lastSequence(), transition);
@@ -106,6 +119,11 @@ public final class TournamentCommandService {
 
     private Optional<TournamentExecution> findReceipt(TournamentId tournamentId, UUID commandId) {
         return store.findCommand(tournamentId, commandId).map(TournamentCommandService::execution);
+    }
+
+    private TournamentExecution rereadReceiptOrThrow(
+            TournamentId tournamentId, UUID commandId, RuntimeException conflict) {
+        return findReceipt(tournamentId, commandId).orElseThrow(() -> conflict);
     }
 
     private StoredTournament loadExpected(TournamentId tournamentId, long expectedVersion) {

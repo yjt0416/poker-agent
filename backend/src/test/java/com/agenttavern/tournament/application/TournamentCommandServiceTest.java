@@ -12,12 +12,17 @@ import com.agenttavern.tournament.TournamentEntrant;
 import com.agenttavern.tournament.TournamentEventEnvelope;
 import com.agenttavern.tournament.TournamentId;
 import com.agenttavern.tournament.TournamentMode;
+import com.agenttavern.tournament.TournamentStatus;
 import com.agenttavern.tournament.port.StoredTournament;
+import com.agenttavern.tournament.port.TournamentCommit;
+import com.agenttavern.tournament.port.TournamentStore;
+import com.agenttavern.tournament.port.TournamentWriteResult;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
@@ -86,6 +91,27 @@ class TournamentCommandServiceTest {
     }
 
     @Test
+    void createRechecksReceiptWhenAnotherProcessCreatesAfterTheInitialMiss() {
+        CreateTournamentCommand command = createCommand(UUID.randomUUID());
+        ReceiptMissThenApplyStore interleavingStore = new ReceiptMissThenApplyStore(
+                store, command.commandId(), () -> service.create(command));
+        AtomicInteger replayDeckCalls = new AtomicInteger();
+        TournamentCommandService replayingService = new TournamentCommandService(
+                interleavingStore,
+                Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC),
+                () -> {
+                    replayDeckCalls.incrementAndGet();
+                    return Deck.standard();
+                });
+
+        TournamentExecution replay = replayingService.create(command);
+
+        assertThat(replay).isEqualTo(interleavingStore.appliedExecution());
+        assertThat(replayDeckCalls).hasValue(0);
+        assertThat(store.receiptCount()).isEqualTo(1);
+    }
+
+    @Test
     void simultaneousDuplicateCreatesProduceOneReceiptWithoutExtraDeckOrClockSideEffects()
             throws Exception {
         BarrierDeckSupplier racingDeckSupplier = new BarrierDeckSupplier();
@@ -145,6 +171,46 @@ class TournamentCommandServiceTest {
     }
 
     @Test
+    void actRechecksReceiptWhenAnotherProcessAdvancesStateAfterTheInitialMiss() {
+        TournamentExecution created = createTournament();
+        ActInTournamentCommand command = new ActInTournamentCommand(
+                UUID.randomUUID(), tournamentId, created.version(), currentActor(created), PlayerAction.call());
+        ReceiptMissThenApplyStore interleavingStore = new ReceiptMissThenApplyStore(
+                store, command.commandId(), () -> service.act(command));
+        CountingClock replayClock = new CountingClock(FIXED_INSTANT, ZoneOffset.UTC);
+        TournamentCommandService replayingService = new TournamentCommandService(
+                interleavingStore, replayClock, Deck::standard);
+
+        TournamentExecution replay = replayingService.act(command);
+
+        assertThat(replay).isEqualTo(interleavingStore.appliedExecution());
+        assertThat(replayClock.instantCalls()).isZero();
+        assertThat(store.receiptCount()).isEqualTo(2);
+    }
+
+    @Test
+    void startNextHandRechecksReceiptWhenAnotherProcessAdvancesStateAfterTheInitialMiss() {
+        TournamentExecution betweenHands = completeCurrentHandByFolding();
+        StartNextHandCommand command = new StartNextHandCommand(
+                UUID.randomUUID(), tournamentId, betweenHands.version(), hand(2));
+        ReceiptMissThenApplyStore interleavingStore = new ReceiptMissThenApplyStore(
+                store, command.commandId(), () -> service.startNextHand(command));
+        AtomicInteger replayDeckCalls = new AtomicInteger();
+        TournamentCommandService replayingService = new TournamentCommandService(
+                interleavingStore,
+                Clock.fixed(FIXED_INSTANT, ZoneOffset.UTC),
+                () -> {
+                    replayDeckCalls.incrementAndGet();
+                    return Deck.standard();
+                });
+
+        TournamentExecution replay = replayingService.startNextHand(command);
+
+        assertThat(replay).isEqualTo(interleavingStore.appliedExecution());
+        assertThat(replayDeckCalls).hasValue(0);
+    }
+
+    @Test
     void staleExpectedVersionThrowsConcurrentUpdate() {
         TournamentExecution created = createTournament();
 
@@ -193,6 +259,20 @@ class TournamentCommandServiceTest {
 
     private TournamentExecution createTournament() {
         return service.create(createCommand(UUID.randomUUID()));
+    }
+
+    private TournamentExecution completeCurrentHandByFolding() {
+        TournamentExecution execution = createTournament();
+        while (Tournament.restore(execution.checkpoint()).status() == TournamentStatus.IN_HAND) {
+            execution = service.act(new ActInTournamentCommand(
+                    UUID.randomUUID(),
+                    tournamentId,
+                    execution.version(),
+                    currentActor(execution),
+                    PlayerAction.fold()));
+        }
+        assertThat(execution.checkpoint().status()).isEqualTo(TournamentStatus.BETWEEN_HANDS);
+        return execution;
     }
 
     private CreateTournamentCommand createCommand(UUID commandId) {
@@ -355,6 +435,57 @@ class TournamentCommandServiceTest {
 
         private int instantCalls() {
             return instantCalls.get();
+        }
+    }
+
+    private static final class ReceiptMissThenApplyStore implements TournamentStore {
+        private final TournamentStore delegate;
+        private final UUID interleavingCommandId;
+        private final Supplier<TournamentExecution> interleavingCommand;
+        private boolean initialLookup = true;
+        private TournamentExecution appliedExecution;
+
+        private ReceiptMissThenApplyStore(
+                TournamentStore delegate,
+                UUID interleavingCommandId,
+                Supplier<TournamentExecution> interleavingCommand) {
+            this.delegate = delegate;
+            this.interleavingCommandId = interleavingCommandId;
+            this.interleavingCommand = interleavingCommand;
+        }
+
+        @Override
+        public Optional<StoredTournament> load(TournamentId requestedTournamentId) {
+            return delegate.load(requestedTournamentId);
+        }
+
+        @Override
+        public Optional<TournamentWriteResult> findCommand(
+                TournamentId requestedTournamentId, UUID commandId) {
+            if (initialLookup && commandId.equals(interleavingCommandId)) {
+                initialLookup = false;
+                appliedExecution = interleavingCommand.get();
+                return Optional.empty();
+            }
+            return delegate.findCommand(requestedTournamentId, commandId);
+        }
+
+        @Override
+        public TournamentWriteResult commit(TournamentCommit commit) {
+            return delegate.commit(commit);
+        }
+
+        @Override
+        public List<TournamentEventEnvelope> eventsAfter(
+                TournamentId requestedTournamentId, long sequenceExclusive) {
+            return delegate.eventsAfter(requestedTournamentId, sequenceExclusive);
+        }
+
+        private TournamentExecution appliedExecution() {
+            if (appliedExecution == null) {
+                throw new AssertionError("interleaving command was not applied");
+            }
+            return appliedExecution;
         }
     }
 }

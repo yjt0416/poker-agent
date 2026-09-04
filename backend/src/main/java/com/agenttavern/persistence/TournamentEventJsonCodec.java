@@ -9,7 +9,11 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
-/** Explicit, stable JSON mapping for public tournament events. No polymorphic default typing is used. */
+/**
+ * Explicit, stable JSON mapping for server-private persisted tournament events. The payloads are
+ * not public event representations because {@code HoleCardsDealt} contains every player's hole
+ * cards. No polymorphic default typing is used.
+ */
 public final class TournamentEventJsonCodec {
 
     private static final String TOURNAMENT_STARTED = "TOURNAMENT_STARTED";
