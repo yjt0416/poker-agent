@@ -17,6 +17,8 @@ jobs:
         run: docker compose up --build --detach --wait --wait-timeout 180
       - name: Verify proxy, SSE and database recovery after restart
         run: python3 scripts/smoke-stack.py --restart
+      - name: Back up and restore the test database
+        run: python3 scripts/backup-stack.py --verify
       - name: Capture diagnostics
         if: failure()
         run: docker compose logs --no-color > compose.log

@@ -23,6 +23,7 @@ coverage/
 playwright-report/
 test-results/
 .runtime/
+backups/
 __pycache__/
 
 # IDE and OS
