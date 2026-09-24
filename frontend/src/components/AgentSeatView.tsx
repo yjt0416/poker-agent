@@ -15,7 +15,7 @@ export function AgentSeatView({ agent }: { agent: AgentSeat }) {
         <span className="seat-stack"><i className="chip-dot" />{formatChips(agent.stack)}</span>
       </div>
       {agent.thinking && <div className="thinking-bubble"><i /><i /><i /></div>}
-      {agent.folded && <span className="folded-badge">已弃牌</span>}
+      {agent.folded && <span className="folded-badge">{agent.mood === 'ELIMINATED' ? '已淘汰' : '已弃牌'}</span>}
       {agent.bet > 0 && <span className="seat-bet"><i className="chip-stack-mini" />{agent.bet}</span>}
     </article>
   )

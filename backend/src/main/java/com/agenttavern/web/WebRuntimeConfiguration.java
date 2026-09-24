@@ -19,6 +19,11 @@ import org.springframework.context.annotation.Profile;
 class WebRuntimeConfiguration {
     @Bean
     @Profile("local")
+    com.agenttavern.web.port.TableSessionStore memoryTableSessionStore() {
+        return new MemoryTableSessionStore();
+    }
+    @Bean
+    @Profile("local")
     TournamentStore runtimeTournamentStore() {
         return new RuntimeTournamentStore();
     }
@@ -30,8 +35,11 @@ class WebRuntimeConfiguration {
     }
 
     @Bean
-    Supplier<Deck> shuffledDeckSupplier() {
-        return () -> Deck.standard().shuffled(ThreadLocalRandom.current());
+    java.util.random.RandomGenerator tableRandom() { return new java.security.SecureRandom(); }
+
+    @Bean
+    Supplier<Deck> shuffledDeckSupplier(java.util.random.RandomGenerator random) {
+        return () -> Deck.standard().shuffled(random);
     }
 
     @Bean

@@ -21,7 +21,12 @@ public record TableView(
         List<CardView> holeCards,
         LegalActionView legalActions,
         List<ActionLogView> actionLog,
-        List<ChatView> chat) {
+        List<ChatView> chat,
+        long sequence,
+        boolean canAdvance,
+        List<RankingView> rankings) {
+
+    public record RankingView(int seat, String name, int sprite, long stack, Integer position) {}
 
     public record BlindView(long small, long big) {}
 
@@ -34,7 +39,8 @@ public record TableView(
             long streetCommitted,
             long handCommitted,
             String status,
-            boolean self) {}
+            boolean self,
+            String emotion) {}
 
     public record CardView(String rank, String suit) {}
 

@@ -18,13 +18,20 @@ public record AgentObservation(
         Street street,
         long pot,
         LegalActions legalActions,
-        List<TableMessage> recentMessages) {
+        List<TableMessage> recentMessages,
+        AgentMemory memory) {
+
+    public AgentObservation(PlayerId self, AgentPersona persona, List<Card> holeCards, List<Card> board,
+            List<ObservedSeat> seats, Street street, long pot, LegalActions legalActions, List<TableMessage> recentMessages) {
+        this(self,persona,holeCards,board,seats,street,pot,legalActions,recentMessages,AgentMemory.empty());
+    }
 
     public AgentObservation {
         requireNonNull(self, "self");
         requireNonNull(persona, "persona");
         requireNonNull(street, "street");
         requireNonNull(legalActions, "legalActions");
+        requireNonNull(memory, "memory");
         holeCards = List.copyOf(holeCards);
         board = List.copyOf(board);
         seats = List.copyOf(seats);

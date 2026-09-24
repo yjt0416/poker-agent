@@ -4,37 +4,101 @@ import com.agenttavern.game.betting.ActionType;
 import com.agenttavern.game.betting.LegalActions;
 import com.agenttavern.game.betting.PlayerAction;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Objects;
+import com.agenttavern.game.handvalue.HandEvaluator;
 
 /** Deterministic offline opponent used when no external LLM is configured. */
 public final class LocalAgentDecisionProvider implements AgentDecisionProvider {
     @Override
     public AgentDecision decide(AgentObservation observation) {
         LegalActions legal = observation.legalActions();
-        int conversationSignal = observation.recentMessages().stream()
-                .mapToInt(message -> message.text().hashCode())
-                .reduce(0, (left, right) -> left * 31 + right);
-        int pressure = Math.floorMod(observation.self().hashCode() + observation.board().hashCode()
-                + observation.persona().aggression()
-                + conversationSignal * observation.persona().provocationSensitivity() / 100, 100);
+        int base = Math.floorMod(Objects.hash(observation.self(), observation.holeCards(),
+                observation.board(), observation.pot(), legal.callAmount()), 100);
+        int conversationSignal = Math.min(3, observation.recentMessages().size())
+                * observation.persona().provocationSensitivity() / 100;
+        int pressure = Math.max(0, Math.min(99, base + observation.memory().decisionBias() + conversationSignal));
+        int strength = strength(observation);
+        var self = observation.seats().stream().filter(s -> s.playerId().equals(observation.self())).findFirst();
+        long stack = self.map(ObservedSeat::stack).orElse(legal.maxRaiseTo());
+        long committed = self.map(ObservedSeat::committed).orElse(0L);
+        long streetCommitted = Math.max(0, legal.maxRaiseTo() - stack);
+        // A whole-hand budget prevents repeated minimum raises from silently becoming a shove.
+        double fraction = strength >= 94 ? 1 : strength >= 85 ? .65 : strength >= 70 ? .35
+                : strength >= 55 ? .18 : strength >= 40 ? .08 : .02;
+        long budget = (long) ((stack + (double) committed) * fraction);
+        long remaining = Math.min(stack, Math.max(0, budget - committed));
+        double price = legal.callAmount() / Math.max(1.0, observation.pot() + (double) legal.callAmount());
+        boolean affordable = legal.callAmount() <= remaining
+                && (strength >= 85 || price <= strength / 200.0 + observation.persona().patience() / 1000.0);
+        boolean valueRaise = strength >= 55 && pressure < observation.persona().aggression() / 2;
+        boolean bluff = strength < 55 && legal.callAmount() == 0
+                && pressure < observation.persona().bluffing() / 8;
         PlayerAction action;
         String summary;
-        if (legal.types().contains(ActionType.RAISE) && pressure < observation.persona().aggression() / 3) {
+        if (legal.types().contains(ActionType.RAISE) && affordable && (valueRaise || bluff)
+                && legal.minRaiseTo().orElseThrow() - streetCommitted <= remaining) {
             long min = legal.minRaiseTo().orElseThrow();
-            long room = legal.maxRaiseTo() - min;
-            action = PlayerAction.raiseTo(min + Math.min(room, Math.max(0, observation.pot() / 3)));
+            long ceiling = Math.min(legal.maxRaiseTo(), streetCommitted + remaining);
+            // Target is total street contribution, not an increment on every re-raise.
+            long extra = observation.pot() / 3;
+            long target = Math.min(ceiling, Math.max(min, streetCommitted + legal.callAmount()
+                    + Math.min(extra, remaining - legal.callAmount())));
+            action = PlayerAction.raiseTo(target);
             summary = "筹码被往前一推，牌桌压力一下大了起来。";
         } else if (legal.types().contains(ActionType.CHECK)) {
             action = PlayerAction.check();
             summary = "暂时不把底池做大，准备再看一眼局势。";
-        } else if (legal.types().contains(ActionType.CALL) && pressure < observation.persona().patience()) {
+        } else if (legal.types().contains(ActionType.CALL) && affordable) {
             action = PlayerAction.call();
             summary = "这个价钱还在接受范围内，选择继续跟着看。";
         } else {
             action = PlayerAction.fold();
             summary = "这次代价不划算，没有必要硬撑。";
         }
-        return new AgentDecision(action, tableTalk(observation.persona().key(), action.type()),
+        String reaction = observation.memory().momentum()>0 ? "刚才那手不错。"
+                : observation.memory().momentum()<0 ? "上一手算我失算。" : "";
+        String talk = reaction + tableTalk(observation.persona().key(), action.type());
+        if (observation.memory().recentUtterances().contains(talk)) {
+            List<String> alternatives = switch (action.type()) {
+                case FOLD -> List.of("茶还温着，这手先歇。", "不争这一口气，下一手再说。", "这回收手，我记住了。");
+                case CHECK -> List.of("先听听桌上的动静。", "筹码先不动，看看再说。", "这一手，慢慢来。");
+                case CALL -> List.of("再陪你走一段。", "我跟着，看看下文。", "行，继续看牌。");
+                default -> List.of("这一轮，我想争一争。", "再添一点，该你考虑了。", "茶可以慢喝，机会不能错过。");
+            };
+            talk = alternatives.stream().map(s->reaction+s)
+                    .filter(s->!observation.memory().recentUtterances().contains(s)).findFirst().orElse("");
+        }
+        return new AgentDecision(action, talk,
                 emotion(action.type()), summary, List.of());
+    }
+
+    /** A conservative made-hand heuristic, not an equity estimate or knowledge of hidden cards. */
+    private static int strength(AgentObservation o) {
+        var first = o.holeCards().get(0);
+        var second = o.holeCards().get(1);
+        int high = Math.max(first.rank().strength(), second.rank().strength());
+        int low = Math.min(first.rank().strength(), second.rank().strength());
+        if (o.board().size() < 3) {
+            if (high == low) return 50 + high * 3;
+            return Math.min(80, high * 3 + low + (first.suit() == second.suit() ? 8 : 0)
+                    + (high - low == 1 ? 5 : 0));
+        }
+        var cards = new ArrayList<>(o.board());
+        cards.addAll(o.holeCards());
+        var value = HandEvaluator.evaluate(cards);
+        // A monster on the board belongs to everyone; don't pay a stack merely to play the board.
+        if (o.board().size() == 5 && value.compareTo(HandEvaluator.evaluate(o.board())) == 0) return 40;
+        return switch (value.category()) {
+            case HIGH_CARD -> 20 + high;
+            case ONE_PAIR -> o.holeCards().stream().anyMatch(c -> c.rank().strength() == value.tieBreakers().getFirst())
+                    ? 48 + value.tieBreakers().getFirst() : 35;
+            case TWO_PAIR -> 70;
+            case THREE_OF_A_KIND -> 80;
+            case STRAIGHT -> 88;
+            case FLUSH -> 91;
+            case FULL_HOUSE, FOUR_OF_A_KIND, STRAIGHT_FLUSH -> 96;
+        };
     }
 
     private static String tableTalk(String persona, ActionType action) {

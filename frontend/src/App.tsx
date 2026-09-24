@@ -1,494 +1,132 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { advanceSpectator, createTable, enterTable, startNextHand, submitAction, submitTalk, type TableView } from './api'
+import { useEffect, useState } from 'react'
+import { useTable } from './useTable'
+import { useTableFeedback } from './useTableFeedback'
+import { useCareerStats } from './useCareerStats'
 import { AgentSeatView } from './components/AgentSeatView'
 import { Avatar } from './components/Avatar'
 import { PlayingCardView } from './components/PlayingCardView'
-import {
-  communityCards,
-  formatChips,
-  holeCards,
-  initialAgents,
-  initialLogs,
-  nextDemoHand,
-  type AgentSeat,
-  type PlayingCard,
-  type TableLog,
-} from './game-demo'
+import { Lobby } from './components/Lobby'
+import { Replay } from './components/Replay'
+import { Results } from './components/Results'
+import { Career } from './components/Career'
+import { formatChips } from './game-demo'
 
-type PlayerAction = '弃牌' | '过牌' | '跟注' | '加注' | '全下'
-
-const aiResponses = [
-  { id: 'vesper', action: '跟注 300', line: '“行，这个故事我跟着听一段。”', tone: 'blue' as const },
-  { id: 'hogarth', action: '加注至 600', line: '“别绕弯子，咱们拿筹码说话。”', tone: 'red' as const },
-  { id: 'mirelle', action: '弃牌', line: '“这笔账不划算，到此为止。”', tone: 'green' as const },
-]
+const streetNames: Record<string,string> = { PREFLOP:'翻牌前',FLOP:'翻牌圈',TURN:'转牌圈',RIVER:'河牌圈',BETWEEN_HANDS:'手牌结束',COMPLETE:'锦标赛结束' }
+const emotionNames: Record<string,string> = { CALM:'沉着',THINKING:'斟酌',CONFIDENT:'自信',SUSPICIOUS:'警觉',NERVOUS:'有些紧张',DELIGHTED:'兴致正高' }
 
 export function App() {
-  const [agents, setAgents] = useState<AgentSeat[]>(initialAgents)
-  const [logs, setLogs] = useState<TableLog[]>(initialLogs)
-  const [pot, setPot] = useState(600)
-  const [stack, setStack] = useState(2500)
-  const [raise, setRaise] = useState(300)
-  const [chat, setChat] = useState('')
-  const [thinking, setThinking] = useState(false)
-  const [lastSpeech, setLastSpeech] = useState('“坐都坐下了，先喝口茶。牌桌上慢慢聊。”')
-  const [lastSpeaker, setLastSpeaker] = useState({ name: '阿绯', sprite: 0 })
-  const [hand, setHand] = useState(18)
-  const [playerCards, setPlayerCards] = useState<PlayingCard[]>(holeCards)
-  const [board, setBoard] = useState<PlayingCard[]>(communityCards)
-  const [roundDone, setRoundDone] = useState(false)
-  const [serverTable, setServerTable] = useState<TableView | null>(null)
-  const [connection, setConnection] = useState<'connecting' | 'online' | 'demo'>('connecting')
-  const [notice, setNotice] = useState('正在进入百兽茶馆……')
-  const [autoPlay, setAutoPlay] = useState(false)
-  const [logOpen, setLogOpen] = useState(false)
-  const timers = useRef<number[]>([])
+  const game = useTable()
+  const {table,pending,online,notice} = game
+  const [page,setPage] = useState<'lobby'|'table'|'replay'|'career'>('lobby')
+  const [logOpen,setLogOpen] = useState(false)
+  const [raise,setRaise] = useState(0)
+  const [chat,setChat] = useState('')
+  const [autoPlay,setAutoPlay] = useState(false)
+  const [speed,setSpeed] = useState(1)
+  const [focus,setFocus] = useState<number | null>(null)
+  const feedback = useTableFeedback(table,page==='table',online)
+  const career = useCareerStats(table)
+  const legal = table?.legalActions
+  const canRaise = legal?.types.includes('RAISE') ?? false
+  const min = legal?.minRaiseTo ?? 0
+  const max = legal?.maxRaiseTo ?? 0
+  const validRaise = canRaise && Number.isSafeInteger(raise) && raise >= min && raise <= max
+  const self = table?.seats.find(s=>s.self)
+  const watching = table?.canAdvance ?? false
+  const actor = table?.seats.find(s=>s.seat===table.actorSeat)
+  const disabled = pending || !online
+  useEffect(()=>{setPage(table?'table':'lobby');setAutoPlay(false);setFocus(null);setChat('')},[table?.tableId])
+  useEffect(()=>{setRaise(min)},[table?.version,min])
+  useEffect(()=>{
+    if (!autoPlay || !watching || disabled || page !== 'table' || !table) return
+    if (table.status === 'COMPLETE') { setAutoPlay(false); return }
+    const timer = window.setTimeout(()=>void game.send(table.status === 'BETWEEN_HANDS'?'next-hand':'advance').then(ok=>{if(!ok)setAutoPlay(false)}),
+      (table.status === 'BETWEEN_HANDS'?1800:900)/speed)
+    return ()=>window.clearTimeout(timer)
+  },[autoPlay,watching,disabled,page,speed,table?.version,table?.status])
 
-  useEffect(() => {
-    let cancelled = false
-    enterTable()
-      .then((view) => {
-        if (cancelled) return
-        hydrate(view)
-        setConnection('online')
-        setNotice('Java 对局服务已连接')
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return
-        setConnection('demo')
-        setNotice(`演示模式 · ${error instanceof Error ? error.message : 'Java 后端未连接'}`)
-      })
-    return () => {
-      cancelled = true
-      timers.current.forEach(window.clearTimeout)
+  async function act(type:string,amount?:number) { return game.send('actions',{type,amount}) }
+  useEffect(()=>{
+    const key = (event: KeyboardEvent) => {
+      if (event.repeat || event.ctrlKey || event.altKey || event.metaKey || disabled || page !== 'table' || watching || logOpen) return
+      if (event.target instanceof Element && event.target.closest('input,textarea,select,button,[contenteditable=true]')) return
+      const type = event.key.toLowerCase()==='f'?'FOLD':event.key.toLowerCase()==='c'?(legal?.types.includes('CHECK')?'CHECK':'CALL'):event.key.toLowerCase()==='r'&&validRaise?'RAISE':null
+      if(type && legal?.types.includes(type)) {event.preventDefault();void act(type,type==='RAISE'?raise:undefined)}
     }
-  }, [])
+    window.addEventListener('keydown',key)
+    return ()=>window.removeEventListener('keydown',key)
+  },[disabled,page,watching,logOpen,legal,raise,validRaise])
+  async function talk() { if(chat.trim() && await game.send('chat',{text:chat.trim()}))setChat('') }
+  function lobby() {setAutoPlay(false);setPage('lobby');setLogOpen(false)}
+  function replay() {setAutoPlay(false);setPage('replay');setLogOpen(false)}
+  const latestChat = table?.chat.at(-1)
+  const speaker = table?.seats.find(s=>s.seat===latestChat?.seat)
+  const result = table && [...table.actionLog].reverse().find(l=>l.action==='本手结算')
 
-  useEffect(() => {
-    if (!autoPlay || serverTable?.mode !== 'SPECTATOR' || thinking) return
-    const timer = window.setTimeout(() => {
-      if (serverTable.status === 'IN_HAND') void advanceSpectatorTurn()
-      else if (serverTable.status === 'BETWEEN_HANDS') void dealNextHand()
-      else setAutoPlay(false)
-    }, serverTable.status === 'IN_HAND' ? 850 : 1500)
-    return () => window.clearTimeout(timer)
-  }, [autoPlay, serverTable?.version, serverTable?.status, thinking])
-
-  const activePlayers = useMemo(() => serverTable
-    ? serverTable.seats.filter((seat) => !['FOLDED', 'OUT', 'ELIMINATED'].includes(seat.status)).length
-    : agents.filter((agent) => !agent.folded).length + (roundDone ? 0 : 1), [agents, roundDone, serverTable])
-  const handResult = useMemo(() => [...logs].reverse().find((log) => log.action === '本手结算'), [logs])
-  const legalTypes = serverTable?.legalActions.types ?? ['FOLD', 'CALL', 'RAISE']
-  const canCheck = legalTypes.includes('CHECK')
-  const canCall = legalTypes.includes('CALL')
-  const canRaise = legalTypes.includes('RAISE')
-  const canAllIn = legalTypes.includes('ALL_IN')
-  const callAmount = serverTable?.legalActions.callAmount ?? 150
-  const maxRaise = serverTable?.legalActions.maxRaiseTo || stack
-  const streetLabel = toStreetLabel(serverTable?.street ?? 'FLOP')
-
-  function appendLog(name: string, action: string, detail: string, tone: TableLog['tone']) {
-    setLogs((current) => [...current, { id: Date.now() + Math.random(), name, action, detail, tone }].slice(-8))
-  }
-
-  function resolveAiTurn(seed: number) {
-    setThinking(true)
-    setAgents((current) => current.map((agent, index) => ({ ...agent, thinking: index === seed % 3 })))
-    const response = aiResponses[seed % aiResponses.length]
-    const timer = window.setTimeout(() => {
-      setThinking(false)
-      setAgents((current) => current.map((agent) => ({
-        ...agent,
-        thinking: false,
-        folded: agent.id === response.id && response.action === '弃牌' ? true : agent.folded,
-      })))
-      setLastSpeech(response.line)
-      const speakingAgent = initialAgents.find((agent) => agent.id === response.id)
-      setLastSpeaker({ name: speakingAgent?.name ?? '牌友', sprite: speakingAgent?.sprite ?? 0 })
-      appendLog(speakingAgent?.name ?? '牌友', response.action, response.line, response.tone)
-      setPot((current) => current + (response.action.includes('600') ? 600 : response.action.includes('300') ? 300 : 0))
-      setRoundDone(true)
-    }, 1100)
-    timers.current.push(timer)
-  }
-
-  function hydrate(view: TableView) {
-    const positions = ['seat-left', 'seat-top', 'seat-right-top', 'seat-right', 'seat-left-bottom', 'seat-bottom']
-    setServerTable(view)
-    setAgents(view.seats.filter((seat) => !seat.self).map((seat) => ({
-      id: seat.persona,
-      name: seat.name,
-      subtitle: personaSubtitle(seat.persona),
-      stack: seat.stack,
-      bet: seat.streetCommitted,
-      mood: seat.status,
-      sprite: seat.sprite,
-      seat: positions[seat.seat] ?? positions[0],
-      folded: ['FOLDED', 'OUT', 'ELIMINATED'].includes(seat.status),
-      thinking: seat.seat === view.actorSeat,
-      dealer: seat.seat === view.buttonSeat,
-    })))
-    const self = view.seats.find((seat) => seat.self)
-    setStack(self?.stack ?? 0)
-    setPot(view.pot)
-    setHand(view.handNumber)
-    setPlayerCards(view.holeCards)
-    setBoard(view.board)
-    setRoundDone(view.status !== 'IN_HAND')
-    setRaise(view.legalActions.minRaiseTo ?? view.legalActions.maxRaiseTo)
-    setLogs(view.actionLog.map((entry) => ({
-      id: entry.sequence,
-      name: entry.name,
-      action: entry.action,
-      detail: entry.summary,
-      tone: toneForAction(entry.action),
-    })))
-    const latestChat = view.chat.at(-1)
-    const latestAction = view.actionLog.at(-1)
-    if (latestChat) {
-      setLastSpeech(`“${latestChat.text}”`)
-      const speaker = view.seats.find((seat) => seat.name === latestChat.name)
-      setLastSpeaker({ name: latestChat.name, sprite: speaker?.sprite ?? 7 })
-    } else if (latestAction) {
-      setLastSpeech(latestAction.summary)
-      const speaker = view.seats.find((seat) => seat.name === latestAction.name)
-      setLastSpeaker({ name: latestAction.name, sprite: speaker?.sprite ?? 0 })
-    }
-  }
-
-  async function act(action: PlayerAction) {
-    if (connection !== 'online') {
-      actDemo(action)
-      return
-    }
-    if (thinking || roundDone) return
-    const type = action === '弃牌' ? 'FOLD'
-      : action === '过牌' ? 'CHECK'
-        : action === '跟注' ? 'CALL'
-          : action === '全下' ? 'ALL_IN' : 'RAISE'
-    setThinking(true)
-    setNotice('对手正在分析牌局与发言……')
-    try {
-      const view = await submitAction(type, type === 'RAISE' ? raise : type === 'ALL_IN' ? maxRaise : undefined)
-      hydrate(view)
-      setNotice('Java 对局服务已连接')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '行动提交失败')
-    } finally {
-      setThinking(false)
-    }
-  }
-
-  function actDemo(action: PlayerAction) {
-    if (thinking || roundDone) return
-    let amount = 0
-    let detail = chat.trim() ? `“${chat.trim()}”` : '你把目光投向牌桌中央。'
-    if (action === '弃牌') {
-      detail = chat.trim() ? `“${chat.trim()}” 你随后扣下手牌。` : '你扣下手牌，退出这一轮。'
-      setRoundDone(true)
-    } else if (action === '跟注') {
-      amount = 150
-    } else if (action === '加注') {
-      amount = raise
-    }
-    setPot((current) => current + amount)
-    setStack((current) => Math.max(0, current - amount))
-    appendLog('你', action === '加注' ? `加注至 ${raise}` : action, detail, action === '弃牌' ? 'green' : 'gold')
-    setChat('')
-    if (action !== '弃牌') resolveAiTurn(logs.length)
-  }
-
-  async function sendTableTalk() {
-    const value = chat.trim()
-    if (!value || thinking) return
-    if (connection === 'online') {
-      setThinking(true)
-      try {
-        hydrate(await submitTalk(value))
-        setChat('')
-        setNotice('你的话已经传到整张牌桌')
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : '发言发送失败')
-      } finally {
-        setThinking(false)
-      }
-      return
-    }
-    appendLog('你', '牌桌发言', `“${value}”`, 'gold')
-    setLastSpeech('“嘴上说得挺稳。可你推筹码的时候，手也得一样稳。”')
-    setLastSpeaker({ name: '阿绯', sprite: 0 })
-    setChat('')
-  }
-
-  async function dealNextHand() {
-    if (connection === 'online') {
-      setThinking(true)
-      try {
-        hydrate(await startNextHand())
-        setNotice('新一手牌已经开始')
-      } catch (error) {
-        setNotice(error instanceof Error ? error.message : '无法开始下一手牌')
-      } finally {
-        setThinking(false)
-      }
-      return
-    }
-    const nextHand = hand + 1
-    const next = nextDemoHand(nextHand)
-    setHand(nextHand)
-    setPlayerCards(next.cards)
-    setBoard(next.board)
-    setPot(300)
-    setRaise(300)
-    setRoundDone(false)
-    setAgents(initialAgents.map((agent) => ({ ...agent, folded: false, bet: agent.id === 'hogarth' || agent.id === 'mirelle' ? 100 : 0 })))
-    setLogs([{ id: Date.now(), name: '茶馆荷官', action: `第 ${nextHand} 手牌开始`, detail: '盲注已下，卡牌已发出。', tone: 'gold' }])
-    setLastSpeech('“新一局，旧账不算。来，咱们重新过招。”')
-    setLastSpeaker({ name: '豪哥', sprite: 1 })
-  }
-
-  async function advanceSpectatorTurn() {
-    if (thinking || serverTable?.mode !== 'SPECTATOR' || serverTable.status !== 'IN_HAND') return
-    setThinking(true)
-    setNotice('Agent 正在推演下一步……')
-    try {
-      hydrate(await advanceSpectator())
-      setNotice('AI 决策剧场 · 实时观战')
-    } catch (error) {
-      setAutoPlay(false)
-      setNotice(error instanceof Error ? error.message : '无法推进牌局')
-    } finally {
-      setThinking(false)
-    }
-  }
-
-  async function switchMode(mode: 'PLAYER' | 'SPECTATOR') {
-    setThinking(true)
-    setAutoPlay(false)
-    setLogOpen(false)
-    setNotice(mode === 'PLAYER' ? '正在安排玩家牌桌……' : '正在点亮 AI 决策剧场……')
-    try {
-      hydrate(await createTable(mode))
-      setConnection('online')
-      setNotice(mode === 'PLAYER' ? 'Java 对局服务已连接' : 'AI 决策剧场 · 实时观战')
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : '无法创建牌桌')
-    } finally {
-      setThinking(false)
-    }
-  }
-
-  async function reconnect() {
-    if (thinking) return
-    setThinking(true)
-    setConnection('connecting')
-    setNotice('正在重新连接 Java 对局服务……')
-    try {
-      hydrate(await enterTable())
-      setConnection('online')
-      setNotice('Java 对局服务已重新连接')
-    } catch (error) {
-      setConnection('demo')
-      setNotice(`重连失败 · ${error instanceof Error ? error.message : '服务不可用'}`)
-    } finally {
-      setThinking(false)
-    }
-  }
-
-  return (
-    <main className={`app-shell ${serverTable?.mode === 'SPECTATOR' ? 'spectator-mode' : 'player-mode'} ${logOpen ? 'drawer-open' : ''}`} aria-busy={thinking}>
-      <div className="ambient-lamp lamp-left" />
-      <div className="ambient-lamp lamp-right" />
-
-      <header className="topbar">
-        <a className="brand" href="#table" aria-label="百兽茶馆首页">
-          <span className="brand-mark">兽</span>
-          <span><b>百兽茶馆</b><small>AGENT TAVERN</small></span>
-        </a>
-        <div className="table-title">
-          <span className="eyebrow">戌时 · 临江厅 · 七号桌</span>
-          <h1>{serverTable?.mode === 'SPECTATOR' ? 'AI 决策剧场' : '无上限德州扑克'}</h1>
-          <div className="compact-toolbar" aria-label="紧凑视图工具栏">
-            <span>第 {hand} 手 · {streetLabel} · {serverTable?.blinds.small ?? 50}/{serverTable?.blinds.big ?? 100}</span>
-            <button className={serverTable?.mode !== 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('PLAYER')} disabled={thinking}>玩家</button>
-            <button className={serverTable?.mode === 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('SPECTATOR')} disabled={thinking}>观战</button>
-            <button aria-expanded={logOpen} onClick={() => setLogOpen((value) => !value)}>动态</button>
-          </div>
-        </div>
-        <div className="header-actions">
-          <span className={`connection connection-${connection}`} role="status" aria-live="polite" title={notice}><i /> {notice}</span>
-          {connection === 'demo' && <button className="retry-button" onClick={() => void reconnect()} disabled={thinking}>重连</button>}
-          <button className="icon-button" aria-label="游戏设置">⚙</button>
-        </div>
-      </header>
-
+  return <main className={`app-shell ${feedback.reduced?'reduced-motion':''} ${watching?'spectator-mode':'player-mode'} ${logOpen?'drawer-open':''} ${page!=='table'?'flow-page':''}`}>
+    <header className="topbar">
+      <button className="brand brand-button" onClick={lobby} aria-label="返回百兽茶馆大厅"><span className="brand-mark">兽</span><span><b>百兽茶馆</b><small>AGENT TAVERN</small></span></button>
+      <div className="table-title"><span className="eyebrow">戌时 · 临江厅</span><h1>{page==='lobby'?'今夜茶局':page==='replay'?'重看风云':page==='career'?'茶馆账本':watching?'AI 决策剧场':'无上限德州扑克'}</h1>
+        {table && page==='table' && <div className="compact-toolbar"><span>第 {table.handNumber} 手 · {streetNames[table.street]}</span>
+          <button onClick={lobby}>大厅</button><button onClick={replay}>回放</button><button aria-expanded={logOpen} onClick={()=>setLogOpen(v=>!v)}>动态</button></div>}
+      </div>
+      <div className="header-actions"><span className={`connection connection-${online?'online':'demo'}`} role="status" title={notice}><i/>{notice}</span>
+        {table && <button className="retry-button" onClick={()=>void game.refresh()}>{online?'同步':'重连'}</button>}
+        <details className="feedback-settings"><summary>声效</summary><div className="feedback-options">
+          <button aria-pressed={feedback.enabled} onClick={()=>void feedback.toggleAudio()}>{feedback.enabled?'静音':'开启音效'}</button>
+          <label>音量 <input aria-label="音效音量" type="range" min="0" max="100" value={feedback.volume} onChange={e=>feedback.setVolume(Number(e.target.value))}/><span>{feedback.volume}%</span></label>
+          <label><input type="checkbox" checked={feedback.reduced} onChange={e=>feedback.setReduced(e.target.checked)}/>减少动态效果</label>
+          <p>每次打开页面后手动开启声音；动态效果同时遵循系统设置。</p>
+          {feedback.error && <p role="status">{feedback.error}</p>}
+        </div></details></div>
+    </header>
+    {page==='career'?<Career stats={career.stats} onBack={lobby} onReset={career.reset}/>:page==='lobby' || !table ? <Lobby table={table} busy={pending} notice={notice} onRetry={()=>void game.refresh()} onResume={()=>setPage('table')} onCareer={()=>setPage('career')}
+      onStart={(mode,name,personas)=>{setAutoPlay(false);void game.start(mode,name,personas)}}/> : page==='replay' ? <Replay key={table.tableId} table={table} onBack={()=>setPage('table')}/> : table.status==='COMPLETE' ?
+      <Results table={table} stats={career.stats} onReplay={replay} onLobby={lobby} onCareer={()=>setPage('career')}/> : <>
+      {!online && <div className="connection-banner" role="alert">连接中断，正在恢复已确认的牌局。<button onClick={()=>void game.refresh()}>立即同步</button></div>}
       <section className="game-layout" id="table">
-        <aside className="side-panel left-panel">
-          <PanelTitle icon="♜" title="本桌情报" subtitle="TABLE INTEL" />
-          <dl className="stats-grid">
-            <div><dt>牌局</dt><dd>第 {hand} 手牌</dd></div>
-            <div><dt>阶段</dt><dd className="accent">{streetLabel}</dd></div>
-            <div><dt>盲注</dt><dd>{serverTable?.blinds.small ?? 50} / {serverTable?.blinds.big ?? 100}</dd></div>
-            <div><dt>在局</dt><dd>{activePlayers} / 6</dd></div>
-          </dl>
-
-          <div className="divider" />
-          <span className="section-kicker">牌桌气氛</span>
-          <div className="tension-meter"><span style={{ width: '68%' }} /></div>
-          <div className="tension-copy"><b>暗流涌动</b><span>68%</span></div>
-
-          <div className="intel-card">
-            <span className="intel-icon">◈</span>
-            <div><b>读牌提示</b><p>豪哥连续两局在翻牌前加注。他未必总有好牌，也可能只是在拿桌上形象压人。</p></div>
-          </div>
-
-          <div className="mode-switch" aria-label="游戏模式">
-            <button className={serverTable?.mode !== 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('PLAYER')} disabled={thinking}>玩家对战</button>
-            <button className={serverTable?.mode === 'SPECTATOR' ? 'active' : ''} onClick={() => void switchMode('SPECTATOR')} disabled={thinking}>AI 互战</button>
-          </div>
-
-          {serverTable?.mode !== 'SPECTATOR' && <div className="player-mini-card">
-            <Avatar sprite={7} name="你" />
-            <div><span>你的筹码</span><b>{formatChips(stack)}</b></div>
-            <span className="rank-badge">#2</span>
-          </div>}
+        <aside className="side-panel left-panel"><PanelTitle title="本桌情报" subtitle="TABLE INTEL"/>
+          <dl className="stats-grid"><div><dt>牌局</dt><dd>第 {table.handNumber} 手牌</dd></div><div><dt>阶段</dt><dd>{streetNames[table.street]}</dd></div><div><dt>盲注</dt><dd>{table.blinds.small} / {table.blinds.big}</dd></div><div><dt>在局</dt><dd>{table.seats.filter(s=>!['FOLDED','ELIMINATED'].includes(s.status)).length} / 6</dd></div></dl>
+          <div className="intel-card"><div><b>{actor?`${actor.name}行动`:'本手落定'}</b><p>{watching?'逐步观察每位牌友的选择。也可以开启自动播放，直至决出冠军。':'发言会成为对手判断的线索。筹码投入由服务端校验，轮到你时才能下注。'}</p></div></div>
+          <div className="side-navigation"><button onClick={lobby}>返回大厅</button><button onClick={replay}>牌局回放</button></div>
+          {self && <div className="player-mini-card"><Avatar sprite={7} name="你"/><div><span>你的筹码</span><b>{formatChips(self.stack)}</b></div></div>}
         </aside>
-
-        <section className="table-stage" aria-label="扑克牌桌">
-          <div className="tavern-glow" />
-          <div className="poker-table">
-            <div className="felt-texture" />
-            <div className="table-emblem"><span>兽</span><small>BAISHOU TEAHOUSE</small></div>
-            <div className="pot-pill"><i className="gold-chip" /><span>底池</span><b>{formatChips(pot)}</b></div>
-            <div className="community-cards">
-              {board.map((card, index) => <PlayingCardView key={`${card.rank}${card.suit}`} card={card} glowing={index === 2} />)}
-              {Array.from({ length: Math.max(0, 5 - board.length) }, (_, index) => <PlayingCardView hidden key={`hidden-${index}`} />)}
-            </div>
-            <div className="round-marker"><span>{streetLabel}</span>{[0, 1, 2, 3].map((step) => <i className={step <= streetStep(serverTable?.street ?? 'FLOP') ? 'active' : ''} key={step} />)}</div>
+        <section className="table-stage" aria-label="扑克牌桌" data-feedback={feedback.effect??undefined}>
+          <div className="tavern-glow"/>
+          <div className="poker-table"><div className="felt-texture"/><div className="table-emblem"><span>兽</span><small>BAISHOU TEAHOUSE</small></div>
+            <div className="pot-pill"><i className="gold-chip"/><span>底池</span><b>{formatChips(table.pot)}</b></div>
+            <div className="community-cards">{table.board.map((card,index)=><PlayingCardView key={`${table.handNumber}-${index}`} card={card}/>)}{Array.from({length:5-table.board.length},(_,i)=><PlayingCardView hidden key={`h${i}`}/>)}</div>
+            <div className="round-marker">{streetNames[table.street]}</div>
           </div>
-
-          {agents.map((agent) => <AgentSeatView agent={agent} key={agent.id} />)}
-
-          {roundDone && handResult && <div className="hand-result" role="status">
-            <span>本手落定</span>
-            <strong>{handResult.detail}</strong>
-          </div>}
-
-          <div className="agent-speech" aria-live="polite">
-            <Avatar sprite={lastSpeaker.sprite} name={lastSpeaker.name} />
-            <div><strong>{lastSpeaker.name}</strong><p>{lastSpeech}</p></div>
-          </div>
-
-          {serverTable?.mode !== 'SPECTATOR' && <section className={`hero-seat ${roundDone ? 'round-complete' : ''}`}>
-            <div className="hero-cards">
-              {playerCards.map((card) => <PlayingCardView key={`${card.rank}${card.suit}`} card={card} glowing />)}
-            </div>
-            <div className="hero-plate">
-              <Avatar sprite={7} name="你" />
-              <div><span>你（玩家）</span><strong>{formatChips(stack)}</strong></div>
-              <span className="hero-style">沉着</span>
-            </div>
-          </section>}
-
+          {table.seats.filter(s=>!s.self || watching).map(s=><AgentSeatView key={s.seat} agent={{id:s.persona,name:s.name,subtitle:s.self?'已淘汰，继续观战':s.status==='ALL_IN'?'全下':s.seat===table.actorSeat?'正在行动':emotionNames[s.emotion??'']??'',stack:s.stack,bet:s.streetCommitted,mood:s.status,sprite:s.sprite,
+            seat:['seat-left','seat-top','seat-right-top','seat-right','seat-left-bottom','seat-bottom'][s.seat],folded:['FOLDED','ELIMINATED'].includes(s.status),thinking:s.seat===table.actorSeat,dealer:s.seat===table.buttonSeat}}/>)}
+          {table.status==='BETWEEN_HANDS' && result && <div className="hand-result" role="status"><span>本手落定</span><strong>{result.summary}</strong></div>}
+          <div className="agent-speech" aria-live="polite"><Avatar sprite={speaker?.sprite??0} name={speaker?.name??'茶馆荷官'}/><div><strong>{speaker?.name??'茶馆荷官'}</strong><p>{latestChat?.text??'各位落座，先喝口茶，再慢慢过招。'}</p></div></div>
+          {!watching && <section className="hero-seat"><div className="hero-cards">{table.holeCards.map((card,i)=><PlayingCardView key={`${table.handNumber}-${i}`} card={card} glowing/>)}</div><div className="hero-plate"><Avatar sprite={7} name="你"/><div><span>{self?.name}（玩家）</span><strong>{formatChips(self?.stack??0)}</strong></div></div></section>}
           <div className="action-dock">
-            {serverTable?.mode === 'SPECTATOR' && !roundDone ? (
-              <div className="spectator-controls">
-                <div><span>AI 决策剧场</span><small>{thinking ? '思考中……' : `行动版本 ${serverTable.version}`}</small></div>
-                <button onClick={() => void advanceSpectatorTurn()} disabled={thinking}>推进一步</button>
-                <button className={autoPlay ? 'active' : ''} onClick={() => setAutoPlay((value) => !value)}>{autoPlay ? '暂停' : '自动播放'}</button>
-              </div>
-            ) : roundDone ? (
-              <button className="next-hand-button" onClick={dealNextHand}>开始下一手牌 <span>→</span></button>
-            ) : (
-              <>
-                <div className="turn-meta"><span>轮到你行动</span><b>{thinking ? 'AI 思考中…' : '剩余 28 秒'}</b></div>
-                <div className="action-buttons">
-                  <button className="action-button fold" onClick={() => act('弃牌')} disabled={thinking || !legalTypes.includes('FOLD')}><span>弃牌</span><small>FOLD · F</small></button>
-                  <button className="action-button check" onClick={() => act(canCheck ? '过牌' : '跟注')} disabled={thinking || (!canCheck && !canCall)}><span>{canCheck ? '过牌' : `跟注 ${callAmount}`}</span><small>{canCheck ? 'CHECK' : 'CALL'} · C</small></button>
-                  <button className="action-button raise" onClick={() => act(canRaise ? '加注' : '全下')} disabled={thinking || (!canRaise && !canAllIn)}><span>{canRaise ? `加注 ${raise}` : '全下'}</span><small>{canRaise ? 'RAISE' : 'ALL IN'} · R</small></button>
-                </div>
-                <div className="raise-control">
-                  <button onClick={() => setRaise(300)}>2×</button>
-                  <button onClick={() => setRaise(450)}>3×</button>
-                  <input aria-label="加注金额" type="range" min={serverTable?.legalActions.minRaiseTo ?? 300} max={Math.max(serverTable?.legalActions.minRaiseTo ?? 300, maxRaise)} step="50" value={raise} onChange={(event) => setRaise(Number(event.target.value))} disabled={!canRaise} />
-                  <button onClick={() => setRaise(maxRaise)} disabled={!canAllIn}>全下</button>
-                </div>
-              </>
-            )}
+            {watching ? <><div className="spectator-controls"><div><span>{self?'你已淘汰 · 继续观战':'AI 决策剧场'}</span><small>{pending?'正在思考……':`第 ${table.handNumber} 手`}</small></div>
+              <button disabled={disabled} onClick={()=>void game.send(table.status==='BETWEEN_HANDS'?'next-hand':'advance')}>{table.status==='BETWEEN_HANDS'?'下一手':'推进一步'}</button>
+              <button disabled={!online} className={autoPlay?'active':''} onClick={()=>setAutoPlay(v=>!v)}>{autoPlay?'暂停':'自动播放'}</button></div>
+              <div className="director-controls"><label>速度 <select aria-label="观战速度" value={speed} onChange={e=>setSpeed(Number(e.target.value))}>{[.5,1,2,4].map(s=><option key={s} value={s}>{s}×</option>)}</select></label>
+                <label>关注 <select aria-label="关注角色" value={focus??''} onChange={e=>setFocus(e.target.value===''?null:Number(e.target.value))}><option value="">全桌</option>{table.seats.map(s=><option value={s.seat} key={s.seat}>{s.name}</option>)}</select></label></div></>
+            : table.status==='BETWEEN_HANDS' ? <button className="next-hand-button" disabled={disabled} onClick={()=>void game.send('next-hand')}>开始下一手牌 →</button>
+            : <><div className="turn-meta"><span>{table.actorSeat===table.selfSeat?'轮到你行动':`${actor?.name??'牌友'}正在思考……`}</span><b>{pending?'正在确认行动':'想好再出手'}</b></div>
+              <div className="action-buttons"><button className="action-button fold" disabled={disabled||!legal?.types.includes('FOLD')} onClick={()=>void act('FOLD')}><span>弃牌</span><small>FOLD · F</small></button>
+                <button className="action-button check" disabled={disabled||!legal?.types.some(t=>['CHECK','CALL'].includes(t))} onClick={()=>void act(legal?.types.includes('CHECK')?'CHECK':'CALL')}><span>{legal?.types.includes('CHECK')?'过牌':`跟注 ${legal?.callAmount??0}`}</span><small>CHECK / CALL · C</small></button>
+                <button className="action-button raise" disabled={disabled||!validRaise} onClick={()=>void act('RAISE',raise)}><span>加注至 {raise}</span><small>RAISE · R</small></button></div>
+              <div className="raise-control"><button disabled={disabled||!canRaise} onClick={()=>setRaise(Math.min(max,Math.max(min,2*table.blinds.big)))}>2 BB</button><button disabled={disabled||!canRaise} onClick={()=>setRaise(Math.min(max,Math.max(min,3*table.blinds.big)))}>3 BB</button>
+                <input aria-label="加注滑块" type="range" min={min} max={max} step={1} value={raise} disabled={disabled||!canRaise} onChange={e=>setRaise(Number(e.target.value))}/>
+                <input aria-label="加注金额" className="raise-number" type="number" min={min} max={max} step={1} value={raise} disabled={disabled||!canRaise} onChange={e=>setRaise(Number(e.target.value))}/>
+                <button disabled={disabled||!legal?.types.includes('ALL_IN')} onClick={()=>void act('ALL_IN',max)}>全下</button></div></>}
           </div>
         </section>
-
-        <aside className={`side-panel right-panel ${logOpen ? 'compact-open' : ''}`}>
-          <button className="drawer-close" aria-label="关闭牌桌动态" onClick={() => setLogOpen(false)}>×</button>
-          <PanelTitle icon="✦" title="牌桌动态" subtitle="ACTION LOG" />
-          <div className="log-list" aria-label="行动日志">
-            {[...logs].reverse().map((log) => (
-              <article className="log-item" key={log.id}>
-                <i className={`log-dot ${log.tone}`} />
-                <div><span><b>{log.name}</b> {log.action}</span><p>{log.detail}</p></div>
-              </article>
-            ))}
-          </div>
-
-          {serverTable?.mode !== 'SPECTATOR' && <div className="table-talk">
-            <div className="talk-heading"><span>牌桌发言</span><small>{chat.length}/120</small></div>
-            <textarea
-              aria-label="牌桌发言"
-              value={chat}
-              maxLength={120}
-              onChange={(event) => setChat(event.target.value)}
-              placeholder="说点什么影响对手的判断……"
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault()
-                  sendTableTalk()
-                }
-              }}
-            />
-            <button onClick={sendTableTalk} disabled={!chat.trim() || thinking}>发送到牌桌 <span>↗</span></button>
-            <p className="talk-note">AI 会把你的发言作为线索，但不会盲目相信。</p>
-          </div>}
+        <aside className={`side-panel right-panel ${logOpen?'compact-open':''}`}><button className="drawer-close" aria-label="关闭牌桌动态" onClick={()=>setLogOpen(false)}>×</button><PanelTitle title="牌桌动态" subtitle="ACTION LOG"/>
+          <div className="log-list" role="region" aria-label="行动日志" tabIndex={0}>{[...table.actionLog].reverse().filter(l=>focus===null||l.seat===focus||l.seat===-1).map(log=><article className="log-item" key={log.sequence}><i className={`log-dot ${log.action.includes('弃牌')?'green':log.action.includes('加注')?'red':'gold'}`}/><div><span><b>{log.name}</b> {log.action}</span><p>{log.summary}</p></div></article>)}</div>
+          {table.mode==='PLAYER' && <div className="table-talk"><div className="talk-heading"><label htmlFor="table-chat">牌桌发言</label><small>{[...chat].length}/240</small></div><textarea id="table-chat" value={chat} maxLength={480} onChange={e=>setChat([...e.target.value].slice(0,240).join(''))} placeholder="说点什么影响对手的判断……" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void talk()}}}/><button disabled={disabled||!chat.trim()} onClick={()=>void talk()}>发送到牌桌 ↗</button><p className="talk-note">5 秒一次 · 对手会听，但未必相信</p></div>}
         </aside>
       </section>
-
-      <footer className="statusbar">
-        <span><i className="online-dot" />{connection === 'online' ? 'Java 权威对局引擎' : '离线演示引擎'}</span>
-        <span>{connection === 'online' ? `安全会话 · 版本 ${serverTable?.version ?? 0}` : '演示模式 · 请启动 Java 后端'}</span>
-        <span>百兽茶馆 · 先行版</span>
-      </footer>
-    </main>
-  )
+    </>}
+    <footer className="statusbar"><span><i className="online-dot"/>{online?'牌桌服务已连接':'等待牌桌服务'}</span><span>{table?`已确认事件 ${table.sequence}`:'虚拟筹码 · 六人淘汰赛'}</span><span>百兽茶馆 · 先行版</span></footer>
+  </main>
 }
-
-function PanelTitle({ icon, title, subtitle }: { icon: string; title: string; subtitle: string }) {
-  return <div className="panel-title"><span>{icon}</span><div><b>{title}</b><small>{subtitle}</small></div></div>
-}
-
-function toneForAction(action: string): TableLog['tone'] {
-  if (action.includes('弃牌')) return 'green'
-  if (action.includes('加注') || action.includes('全下')) return 'red'
-  if (action.includes('过牌')) return 'blue'
-  return 'gold'
-}
-
-function personaSubtitle(persona: string) {
-  return ({
-    vesper: '临江茶馆掌柜',
-    hogarth: '北地矿场工头',
-    mirelle: '江南票号账房',
-    bruno: '退隐镖师',
-    bunji: '岭南药铺学徒',
-    nyx: '茶楼说书人',
-    ragnar: '北地商队主',
-    pip: '码头机灵跑堂',
-  } as Record<string, string>)[persona] ?? '神秘牌手'
-}
-
-function streetStep(street: string) {
-  return ({ PREFLOP: 0, FLOP: 1, TURN: 2, RIVER: 3, SHOWDOWN: 3 } as Record<string, number>)[street] ?? 0
-}
-
-function toStreetLabel(street: string) {
-  return ({ PREFLOP: '翻牌前', FLOP: '翻牌圈', TURN: '转牌圈', RIVER: '河牌圈',
-    SHOWDOWN: '摊牌', BETWEEN_HANDS: '手牌结束', COMPLETE: '锦标赛结束' } as Record<string, string>)[street] ?? street
-}
+function PanelTitle({title,subtitle}:{title:string;subtitle:string}) {return <div className="panel-title"><span>✦</span><div><b>{title}</b><small>{subtitle}</small></div></div>}

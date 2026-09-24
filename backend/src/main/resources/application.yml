@@ -2,11 +2,30 @@ spring:
   profiles:
     default: local
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
 agent-tavern:
+  secure-cookie: ${AGENT_TAVERN_SECURE_COOKIE:false}
   cors-origins: ${AGENT_TAVERN_CORS_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
   agent-provider: ${AGENT_TAVERN_AGENT_PROVIDER:local}
   deepseek:
     api-key: ${DEEPSEEK_API_KEY:}
     base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
-    model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+    model: ${DEEPSEEK_MODEL:deepseek-flash}
     timeout: ${DEEPSEEK_TIMEOUT:20s}
+    max-output-tokens: ${DEEPSEEK_MAX_OUTPUT_TOKENS:512}
+    max-requests-per-hour: ${DEEPSEEK_MAX_REQUESTS_PER_HOUR:120}

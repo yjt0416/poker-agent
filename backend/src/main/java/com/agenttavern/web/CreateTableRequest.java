@@ -1,3 +1,3 @@
 package com.agenttavern.web;
 
-public record CreateTableRequest(String displayName, String mode) {}
+public record CreateTableRequest(String displayName, String mode, java.util.List<String> personas) {}

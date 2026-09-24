@@ -4,6 +4,7 @@ import com.agenttavern.agents.AgentDecisionProvider;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.convert.DurationStyle;
@@ -19,12 +20,16 @@ class DeepSeekProviderConfiguration {
             @Value("${agent-tavern.deepseek.api-key}") String apiKey,
             @Value("${agent-tavern.deepseek.base-url}") URI baseUrl,
             @Value("${agent-tavern.deepseek.model}") String model,
-            @Value("${agent-tavern.deepseek.timeout}") String timeoutValue) {
+            @Value("${agent-tavern.deepseek.timeout}") String timeoutValue,
+            @Value("${agent-tavern.deepseek.max-output-tokens:512}") int maxOutputTokens,
+            @Value("${agent-tavern.deepseek.max-requests-per-hour:120}") int maxRequestsPerHour,
+            MeterRegistry registry) {
         Duration timeout = DurationStyle.detectAndParse(timeoutValue);
-        DeepSeekProperties properties = new DeepSeekProperties(baseUrl, apiKey, model, timeout);
+        DeepSeekProperties properties = new DeepSeekProperties(baseUrl, apiKey, model, timeout,
+                maxOutputTokens, maxRequestsPerHour);
         return new DeepSeekDecisionProvider(
                 properties,
                 HttpClient.newBuilder().connectTimeout(timeout).build(),
-                JsonMapper.builder().build());
+                JsonMapper.builder().build(), registry);
     }
 }

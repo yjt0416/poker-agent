@@ -1,0 +1,5 @@
+# Run Caddy on the same host as the loopback-bound Compose stack.
+# Replace the placeholder with a domain you control, then configure DNS.
+your-domain.example {
+    reverse_proxy 127.0.0.1:8088
+}

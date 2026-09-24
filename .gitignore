@@ -20,6 +20,10 @@ build/
 node_modules/
 dist/
 coverage/
+playwright-report/
+test-results/
+.runtime/
+__pycache__/
 
 # IDE and OS
 .idea/

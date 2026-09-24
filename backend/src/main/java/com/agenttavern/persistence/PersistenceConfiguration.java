@@ -13,6 +13,11 @@ import tools.jackson.databind.json.JsonMapper;
 public class PersistenceConfiguration {
 
     @Bean
+    JdbcTableSessionStore jdbcTableSessionStore(JdbcClient jdbcClient) {
+        return new JdbcTableSessionStore(jdbcClient);
+    }
+
+    @Bean
     JsonMapper tournamentPersistenceJsonMapper() {
         return TournamentCheckpointJdbcMapper.jsonMapper();
     }

@@ -1,0 +1,16 @@
+.feedback-settings { position:relative; color:#e5d5b3; font-size:12px; }
+.feedback-settings summary { cursor:pointer; padding:8px; min-height:36px; }
+.feedback-options { position:absolute; right:0; top:100%; z-index:80; width:230px; padding:16px; background:#241d14; border:1px solid #80663c; border-radius:8px; box-shadow:0 8px 24px #0009; display:grid; gap:12px; }
+.feedback-options button { padding:8px; border:1px solid #80663c; border-radius:4px; background:#382916; color:#f4e5c5; cursor:pointer; }
+.feedback-options label { display:flex; align-items:center; gap:8px; }
+.feedback-options input[type=range] { min-width:0; width:115px; accent-color:#d8ad61; }
+.feedback-options p { margin:0; font-size:11px; line-height:1.5; }
+@keyframes table-card-arrive { from { opacity:.35; translate:0 -10px; } to { opacity:1; translate:0 0; } }
+@keyframes table-chip-pulse { 50% { filter:brightness(1.65); } }
+.table-stage[data-feedback=deal] .playing-card { animation:table-card-arrive .18s ease-out; }
+.table-stage[data-feedback=chips] .pot-pill,.table-stage[data-feedback=all-in] .seat-bet { animation:table-chip-pulse .18s ease-out; }
+.table-stage[data-feedback=win] .hand-result { animation:table-chip-pulse .18s ease-out; }
+.table-stage[data-feedback=fold] .folded-badge { animation:table-card-arrive .18s ease-out; }
+.reduced-motion *,.reduced-motion *::before,.reduced-motion *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
+@media (prefers-reduced-motion:reduce) { .table-stage * { animation:none!important; transition:none!important; } }
+@media(max-width:650px) { .header-actions { gap:2px; } .feedback-settings summary { padding:6px 2px; } .feedback-options { right:0; width:210px; } }

@@ -5,7 +5,8 @@ import static java.util.Objects.requireNonNull;
 import java.net.URI;
 import java.time.Duration;
 
-public record DeepSeekProperties(URI baseUrl, String apiKey, String model, Duration timeout) {
+public record DeepSeekProperties(URI baseUrl, String apiKey, String model, Duration timeout,
+                                 int maxOutputTokens, int maxRequestsPerHour) {
     public DeepSeekProperties {
         requireNonNull(baseUrl, "baseUrl");
         requireNonNull(apiKey, "apiKey");
@@ -18,11 +19,19 @@ public record DeepSeekProperties(URI baseUrl, String apiKey, String model, Durat
             throw new IllegalArgumentException("DeepSeek base URL must use HTTPS (HTTP is test-loopback only)");
         }
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
+        if (maxOutputTokens < 1 || maxOutputTokens > 4096) {
+            throw new IllegalArgumentException("maxOutputTokens must be between 1 and 4096");
+        }
+        if (maxRequestsPerHour < 1) throw new IllegalArgumentException("maxRequestsPerHour must be positive");
+    }
+
+    public DeepSeekProperties(URI baseUrl, String apiKey, String model, Duration timeout) {
+        this(baseUrl, apiKey, model, timeout, 512, 120);
     }
 
     public static DeepSeekProperties production(String apiKey) {
         return new DeepSeekProperties(URI.create("https://api.deepseek.com"), apiKey,
-                "deepseek-v4-flash", Duration.ofSeconds(20));
+                "deepseek-flash", Duration.ofSeconds(20));
     }
 
     URI chatCompletionsUri() {
@@ -31,6 +40,7 @@ public record DeepSeekProperties(URI baseUrl, String apiKey, String model, Durat
 
     @Override public String toString() {
         return "DeepSeekProperties[baseUrl=" + baseUrl + ", apiKey=<redacted>, model=" + model
-                + ", timeout=" + timeout + "]";
+                + ", timeout=" + timeout + ", maxOutputTokens=" + maxOutputTokens
+                + ", maxRequestsPerHour=" + maxRequestsPerHour + "]";
     }
 }

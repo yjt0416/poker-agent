@@ -18,6 +18,12 @@ import java.util.UUID;
 final class RuntimeTournamentStore implements TournamentStore {
     private State state = State.empty();
 
+    synchronized <T> T transaction(java.util.function.Supplier<T> work) {
+        State before = state;
+        try { return work.get(); }
+        catch (RuntimeException error) { state = before; throw error; }
+    }
+
     @Override
     public synchronized Optional<StoredTournament> load(TournamentId tournamentId) {
         return Optional.ofNullable(state.tournaments().get(tournamentId));

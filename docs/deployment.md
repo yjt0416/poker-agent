@@ -1,0 +1,94 @@
+# 本地整栈与发布验收
+
+## 一键启动
+
+要求 Docker Engine/Desktop（Linux 容器）及支持 `up --wait` 的 Compose。无需在宿主机另装 Java、Node 或 PostgreSQL。
+
+Windows，在项目根目录运行：
+
+```powershell
+.\scripts\start.ps1
+```
+
+Linux/macOS：
+
+```sh
+sh scripts/start.sh
+```
+
+脚本首次创建被 Git 忽略的 `.env`，生成随机数据库密码；已有 `.env` 不会被覆盖。默认使用离线 Agent，无模型费用。服务健康后打开 `http://localhost:8088`。自定义端口用 `.env` 的 `WEB_PORT`，同时调整 `AGENT_TAVERN_CORS_ORIGINS`。
+
+三个服务分别是 PostgreSQL 17、Java 21 后端、Nginx 静态前端/API 代理。数据库和后端没有宿主机发布端口，前端仅绑定 `127.0.0.1`。后端、前端以非 root 用户运行，文件系统只读，仅 `/tmp` 可写。数据库数据保存在 `postgres_data` 命名卷。
+
+```sh
+docker compose ps
+docker compose logs --tail 100 backend
+docker compose down
+```
+
+`down` 保留数据卷。不要给停止命令增加 `--volumes`，除非确实要清空全部牌局。更改 `.env` 密码不会自动更改已有 PostgreSQL 数据卷里的角色密码。
+
+## 健康检查与实时代理
+
+- `GET /health`：静态前端存活。
+- `GET /api/health`：代理到后端 readiness；数据库不可用时不应就绪。
+- 后端内部 `/actuator/health/liveness` 与 `/actuator/health/readiness` 可供容器探测，`/actuator/metrics` 提供业务与 JVM 指标；外部 `/actuator` 被 Nginx 拦截，不暴露配置、环境变量和组件详情。
+- SSE 代理关闭缓冲和缓存，使用 65 秒读取超时，后端每 15 秒心跳。
+- 网关开桌限制为每 IP 每分钟 6 次，突发 3 次；普通 API 每秒 15 次，突发 30 次；SSE 每 IP 最多 12 条、每会话最多 8 条。生产多用户/NAT 场景需要实测调整。
+- Compose 下启用 ECS JSON 结构化控制台日志。`agent.tavern.tables.created`（按模式）、`agent.tavern.sse.subscriptions`、`agent.tavern.sse.resumes` 统计开桌与连接；DeepSeek 模式增加 `agent.tavern.llm.requests`、`failures`、`fallbacks`、`budget.exhausted`、`illegal.actions`、`tokens`（按输入/输出）和 `latency`。这些指标只保存在进程内，尚无持久化监控或费用折算。
+- DeepSeek 默认 `deepseek-flash`、关闭思考模式、每次最多 512 输出 Token。`DEEPSEEK_MAX_REQUESTS_PER_HOUR` 默认 120，滚动一小时内每次调用和修复重试都计入；达到上限改用安全动作。限额只约束单实例当前进程，重启会重置，且输入 Token 的价格依模型计费而变，因此不能把它当作严格的账户消费上限。
+
+这些配置采用 [Compose 健康依赖顺序](https://docs.docker.com/compose/how-tos/startup-order/) 和 [Spring Boot 健康端点](https://docs.spring.io/spring-boot/reference/actuator/monitoring.html) 的机制。
+
+## 自动验收
+
+在专门的本地验收栈上运行；脚本会另建一张牌桌，`--restart` 会重启后端：
+
+```sh
+python scripts/smoke-stack.py --restart
+```
+
+依次检查网关健康、失效 SSE 会话的 401、玩家牌局、聊天、重复命令、SSE 即时帧、重启后相同 Cookie 的会话/回执恢复，以及回放。脚本不输出 Cookie、底牌或密钥。GitHub Actions 已添加独立 `compose-smoke` job，在临时 CI 数据卷上执行完整流程。没有 Docker 时，可针对本机 PostgreSQL 后端运行 `python scripts/smoke-stack.py --url http://127.0.0.1:8080 --health-path /actuator/health/readiness`，该模式不验证 Nginx 或容器重启。
+
+无 Docker 时，已有 PostgreSQL 专用测试库也能运行持久化验收：
+
+```powershell
+$env:POKER_TEST_DB_URL='jdbc:postgresql://127.0.0.1:55432/agent_tavern_it'
+$env:POKER_TEST_DB_USERNAME='<测试用户>'
+$env:POKER_TEST_DB_PASSWORD='<测试密码>'
+backend\mvnw.cmd -f backend\pom.xml -Ppostgres-it verify
+```
+
+LocalIT 仅接受回环地址且库名包含独立 `test`/`it` 标记；只删除各用例自己创建的数据。Docker IT 与 LocalIT 执行同一持久化契约，因此选择其中一个环境即可验证契约；不能把跳过项算作通过。
+
+## HTTPS 与公开部署边界
+
+目前 Compose 是本地整栈，不会自动申请证书或公开端口。可在宿主机部署 Caddy，参考 `deploy/Caddyfile.example`，把你控制的域名转发到本地 8088；配置 DNS 和证书后再将 `AGENT_TAVERN_SECURE_COOKIE=true`，CORS 改为准确的 HTTPS 来源，并重新创建后端容器。没有 HTTPS 时启用 Secure Cookie 会导致浏览器不能维持 HTTP 会话。
+
+公网入口应有唯一受信任的边缘代理。当前 Nginx 使用连接 IP 做限流；再套代理时会按该代理的 IP 合并计数，需根据实际拓扑配置可信来源，不能直接信任客户端提供的转发头。
+
+正式公开发布仍缺：数据保留/备份恢复策略与演练、负载验收、域名/HTTPS 验收、实际容器运行及真实新密钥 DeepSeek 联调。当前只支持单个后端实例，不能直接水平扩容。请求限额只是基础费用保护；若需要严格预算，应结合 DeepSeek 账户侧限额或持久化用量控制。
+
+## 2026-09-21 实际验证范围
+
+- 后端 311 项常规测试通过；真实 PostgreSQL 17.11 上 9 项领域持久化及 2 项 Web 恢复/原子回滚验收通过。
+- 5 项 Chromium E2E 在 PostgreSQL 后端下通过。
+- 人工关闭并重启 Java 进程后，浏览器刷新恢复同一手牌、筹码、聊天和事件序号。
+- Compose 官方 CLI 的配置校验通过；PowerShell 启动脚本与 Python 验收脚本语法检查通过。
+- 本机无 Docker daemon，镜像构建、Nginx 容器运行及 Compose 整栈冒烟尚未执行；远端 CI 尚未运行。配置完成不等同于这些验收已经通过。
+
+## 2026-09-22 增量验证
+
+Agent 记忆与情绪接入后，后端 317 项常规测试、真实 PostgreSQL 12 项 LocalIT、前端 13 项测试及生产构建、Chromium 5 项 E2E 均通过。新增数据库契约覆盖私有记忆重启恢复及回放隔离，详见 [记忆验收](reviews/2026-09-22-agent-memory.md)。Docker、HTTPS、远端 CI 和真实 DeepSeek 的未验收边界不变。
+
+## 2026-09-23 增量验证
+
+离线策略、声音/动态反馈及匿名本地战绩接入后，后端最近一次常规套件为 324 项通过；前端 22 项、生产构建及 Chromium 7 项 E2E 通过。真实 PostgreSQL 契约仍为此前 12 项通过，本日服务端未变更后未重复执行。Docker、HTTPS、远端 CI 和真实 DeepSeek 的未验收边界不变。
+
+## 2026-09-25 发布前复验
+
+- DeepSeek 默认模型按当前官方接口改为 `deepseek-flash`；适配器加入输出上限、单进程一小时调用上限、Token/延迟/失败/安全降级指标。真实密钥未使用。
+- 修正失效 SSE 会话：接受 `text/event-stream` 的请求现在得到明确的 401 空响应，不再触发 JSON 协商错误。独立验收脚本也检查该状态。
+- 完整后端 326 项常规测试通过；真实 PostgreSQL 17.11 的 12 项 LocalIT 通过。第一次在并行前端任务负载下有一项 10 秒等待超时，单项重跑及随后整套顺序重跑均通过，仍需 CI 观察稳定性。
+- 前端 22 项测试、生产构建、Chromium 7 项 E2E、`npm audit --audit-level=high` 通过。真实 PostgreSQL 后端上的本机冒烟通过健康、失效 SSE、开桌、聊天幂等、SSE 即时帧及会话回放；内部指标端点可读到开桌和订阅计数。
+- Compose 配置校验通过；本机没有 Docker Engine，镜像、Nginx 代理、容器重启恢复仍待 `compose-smoke` 在 Docker/CI 环境运行。仓库当前没有 Git 远端，因此 GitHub Actions 尚未有远端运行结果。

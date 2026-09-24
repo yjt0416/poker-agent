@@ -1,36 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, enterTable } from './api'
-
-const table = {
-  tableId: 'table-1', version: 1, mode: 'PLAYER', status: 'IN_HAND', handNumber: 1,
-  street: 'PREFLOP', pot: 150, buttonSeat: 0, actorSeat: 5, selfSeat: 5,
-  blinds: { small: 50, big: 100 }, seats: [], board: [], holeCards: [],
-  legalActions: { types: [], callAmount: 0, minRaiseTo: null, maxRaiseTo: 0 },
-  actionLog: [], chat: [],
-}
-
-afterEach(() => vi.unstubAllGlobals())
-
-describe('table entry', () => {
-  it('deduplicates React StrictMode concurrent entry attempts', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ message: 'expired' }) })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => table })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const [first, second] = await Promise.all([enterTable(), enterTable()])
-
-    expect(first.tableId).toBe('table-1')
-    expect(second.tableId).toBe('table-1')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/tables')).toHaveLength(1)
+import { ApiError, command, enterTable, subscribeTable } from './api'
+import { tableView } from './test/fixtures'
+afterEach(()=>{vi.unstubAllGlobals();vi.useRealTimers()})
+describe('table protocol',()=>{
+  it('deduplicates entry and treats missing sessions as the lobby',async()=>{
+    const fetch=vi.fn().mockResolvedValue({ok:false,status:401,json:async()=>({message:'expired'})});vi.stubGlobal('fetch',fetch);
+    expect(await Promise.all([enterTable(),enterTable()])).toEqual([null,null]);expect(fetch).toHaveBeenCalledTimes(1);
   })
-
-  it('turns a broken backend connection into an actionable Chinese error', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-
-    await expect(enterTable()).rejects.toEqual(
-      new ApiError(0, '无法连接牌桌服务，请确认后端已启动'),
-    )
+  it('includes identity, version and a caller-supplied command ID',async()=>{
+    const fetch=vi.fn().mockResolvedValue({ok:true,json:async()=>tableView()});vi.stubGlobal('fetch',fetch);await command(tableView(),'actions',{type:'CALL'},'same-command');
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({tableId:'table-1',expectedVersion:3,commandId:'same-command',type:'CALL'});
+  })
+  it('reports connection errors without creating another table',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));await expect(enterTable()).rejects.toEqual(new ApiError(0,'无法连接牌桌服务，请确认后端已启动'));
+  })
+  it('reconnects from the received cursor and cancels retries on unmount',()=>{
+    vi.useFakeTimers();const instances:FakeStream[]=[];
+    class FakeStream {onopen=()=>{};onerror=()=>{};listeners:Record<string,(e:{data:string})=>void>={};close=vi.fn();constructor(public url:string){instances.push(this)}addEventListener(name:string,fn:(e:{data:string})=>void){this.listeners[name]=fn}}
+    vi.stubGlobal('EventSource',FakeStream);const update=vi.fn();const stop=subscribeTable(tableView(),update,vi.fn());
+    instances[0].listeners.table({data:JSON.stringify(tableView({sequence:8}))});instances[0].onerror();vi.advanceTimersByTime(1000);
+    expect(instances[1].url).toContain('after=8');expect(update).toHaveBeenCalledTimes(1);instances[1].onerror();stop();vi.advanceTimersByTime(30000);expect(instances).toHaveLength(2);
   })
 })
