@@ -1,6 +1,7 @@
 package com.agenttavern.persistence;
 
 import com.agenttavern.web.port.TableSessionStore;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
@@ -43,5 +44,24 @@ public class JdbcTableSessionStore implements TableSessionStore {
                 order by sequence limit :limit
                 """).param("hash", hash).param("after", after).param("limit", limit)
                 .query((rs, row) -> new Frame(rs.getLong(1), rs.getString(2))).list();
+    }
+    @Transactional
+    public List<UUID> purgeExpired(Instant cutoff) {
+        var ids = jdbc.sql("""
+                with doomed as (
+                    select token_hash from table_sessions where expires_at <= :cutoff
+                    order by expires_at limit 500 for update skip locked
+                )
+                delete from table_sessions where token_hash in (select token_hash from doomed)
+                returning tournament_id
+                """).param("cutoff", cutoff.atOffset(ZoneOffset.UTC))
+                .query((rs, row) -> rs.getObject(1, UUID.class)).list();
+        if (!ids.isEmpty()) {
+            jdbc.sql("""
+                    delete from tournaments t where tournament_id in (:ids)
+                    and not exists (select 1 from table_sessions s where s.tournament_id=t.tournament_id)
+                    """).param("ids", ids).update();
+        }
+        return ids;
     }
 }

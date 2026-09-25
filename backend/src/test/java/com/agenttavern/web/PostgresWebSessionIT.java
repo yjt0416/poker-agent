@@ -51,6 +51,7 @@ abstract class PostgresWebSessionContract {
             var failingArchive = new com.agenttavern.web.port.TableSessionStore() {
                 public java.util.Optional<Session> find(String hash) { return archive.find(hash); }
                 public java.util.List<Frame> frames(String hash,long after,int limit) { return archive.frames(hash,after,limit); }
+                public java.util.List<UUID> purgeExpired(java.time.Instant cutoff) { return archive.purgeExpired(cutoff); }
                 public void save(Session session,long expected,Frame frame) {
                     archive.save(session,expected,frame);
                     if (fail.get()) throw new IllegalStateException("injected archive failure");
@@ -148,6 +149,38 @@ abstract class PostgresWebSessionContract {
             assertThat(saved.chat()).anySatisfy(message -> assertThat(message.text()).isEqualTo(talk.text()));
             // This runner may target a shared test DB: delete only this test's tournament.
             deleteOwnedTable(restarted, saved.tableId());
+        }
+    }
+
+    @Test
+    void expiredSessionPurgeRemovesReplayAndPrivateTournamentData() {
+        try (var app = application()) {
+            var service = app.getBean(GameTableService.class);
+            var created = service.createTable("清理验收", "PLAYER", null);
+            var id = UUID.fromString(created.view().tableId());
+            await().atMost(Duration.ofSeconds(10)).until(() ->
+                    java.util.Objects.equals(service.current(created.sessionToken()).actorSeat(), 5));
+            var jdbc = app.getBean(org.springframework.jdbc.core.simple.JdbcClient.class);
+            String hash = jdbc.sql("select token_hash from table_sessions where tournament_id=:id")
+                    .param("id", id).query(String.class).single();
+            jdbc.sql("update table_sessions set expires_at='1970-01-01T00:00:00Z' where tournament_id=:id")
+                    .param("id", id).update();
+            var sessions = app.getBean(com.agenttavern.web.port.TableSessionStore.class);
+            assertThat(sessions.purgeExpired(java.time.Instant.parse("1970-01-02T00:00:00Z")))
+                    .contains(id);
+            for (String table : java.util.List.of("table_sessions", "table_frames", "tournaments",
+                    "tournament_seats", "hand_snapshots", "tournament_events", "tournament_command_receipts")) {
+                if (table.equals("table_frames")) {
+                    assertThat(jdbc.sql("select count(*) from table_frames where token_hash=:hash")
+                            .param("hash", hash).query(Long.class).single()).isZero();
+                } else if (table.equals("table_sessions")) {
+                    assertThat(jdbc.sql("select count(*) from table_sessions where tournament_id=:id")
+                            .param("id", id).query(Long.class).single()).isZero();
+                } else {
+                    assertThat(jdbc.sql("select count(*) from " + table + " where tournament_id=:id")
+                            .param("id", id).query(Long.class).single()).isZero();
+                }
+            }
         }
     }
 

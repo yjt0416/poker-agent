@@ -98,11 +98,25 @@ class GameTableServiceTest {
         assertThat(json.writeValueAsString(replay)).doesNotContain("deck","burnedCards","playerId");
     }
 
+    @Test void expiredTableAndArchiveAreReleasedAfterRetentionWindow() throws Exception {
+        var hub = new TableStreamHub();
+        var svc = service(GameTableServiceTest::call, sessions, hub);
+        var created = svc.createTable("清理验收", "PLAYER", null);
+        await(svc, created.sessionToken(), view -> Objects.equals(view.actorSeat(), 5));
+        var id = new com.agenttavern.tournament.TournamentId(UUID.fromString(created.view().tableId()));
+        assertThat(store.load(id)).isPresent();
+        assertThat(svc.cleanupExpired(clock.instant().plus(Duration.ofHours(33)))).isEqualTo(2);
+        assertThat(store.load(id)).isEmpty();
+        assertThatThrownBy(() -> svc.current(created.sessionToken()))
+                .isInstanceOf(TableSessionException.class).hasMessageContaining("失效");
+    }
+
     @Test void failedArchiveCommitRollsBackDomainAndDoesNotCreateAFrame() throws Exception {
         var fail=new java.util.concurrent.atomic.AtomicBoolean();
         TableSessionStore archive=new TableSessionStore(){
             public Optional<Session> find(String hash){return sessions.find(hash);}
             public List<Frame> frames(String hash,long after,int limit){return sessions.frames(hash,after,limit);}
+            public List<UUID> purgeExpired(Instant cutoff){return sessions.purgeExpired(cutoff);}
             public void save(Session s,long expected,Frame f){if(fail.get())throw new IllegalStateException("disk unavailable");sessions.save(s,expected,f);}
         };
         var svc=service(GameTableServiceTest::call,archive);var created=svc.createTable("旅人","PLAYER",null);

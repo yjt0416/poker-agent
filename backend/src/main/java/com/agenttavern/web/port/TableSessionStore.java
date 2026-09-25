@@ -12,4 +12,6 @@ public interface TableSessionStore {
     Optional<Session> find(String tokenHash);
     void save(Session session, long expectedSequence, Frame frame);
     List<Frame> frames(String tokenHash, long after, int limit);
+    /** Purges up to one batch of sessions past the retention cutoff and returns their tournament IDs. */
+    List<UUID> purgeExpired(Instant cutoff);
 }

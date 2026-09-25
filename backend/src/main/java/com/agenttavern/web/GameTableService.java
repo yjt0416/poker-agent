@@ -79,6 +79,8 @@ public class GameTableService {
     private final ConcurrentMap<String, RuntimeTable> tables = new ConcurrentHashMap<>();
     private final ExecutorService workers = new ThreadPoolExecutor(4, 4, 0, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(64), Thread.ofPlatform().daemon().name("table-agent-", 0).factory());
+    private final ScheduledExecutorService cleanup = Executors.newSingleThreadScheduledExecutor(
+            Thread.ofPlatform().daemon().name("table-cleanup").factory());
 
     public GameTableService(
             TournamentCommandService commands,
@@ -96,6 +98,29 @@ public class GameTableService {
         this.random = random;
         var manager = transactionManager.getIfAvailable();
         this.transactions = manager == null ? TransactionOperations.withoutTransaction() : new TransactionTemplate(manager);
+        cleanup.scheduleWithFixedDelay(() -> {
+            try { cleanupExpired(clock.instant()); }
+            catch (RuntimeException error) {
+                org.slf4j.LoggerFactory.getLogger(GameTableService.class).warn(
+                        "Expired table cleanup failed ({})", error.getClass().getSimpleName());
+            }
+        }, 1, 15, TimeUnit.MINUTES);
+    }
+
+    int cleanupExpired(Instant now) {
+        var evicted = new java.util.concurrent.atomic.AtomicInteger();
+        tables.forEach((hash, table) -> {
+            if (!now.isBefore(table.expiresAt) && tables.remove(hash, table)) {
+                streams.disconnect(hash);
+                evicted.incrementAndGet();
+            }
+        });
+        // The extra day preserves a short backup/recovery window after browser access expires.
+        var purged = sessions.purgeExpired(now.minus(Duration.ofHours(24)));
+        if (!purged.isEmpty() && store instanceof RuntimeTournamentStore memory) {
+            memory.removeAll(purged.stream().map(TournamentId::new).toList());
+        }
+        return evicted.get() + purged.size();
     }
 
     CreatedTable createTable(String requestedName, String requestedMode, List<String> requestedPersonas) {
@@ -596,9 +621,9 @@ public class GameTableService {
             if (!table.id.value().toString().equals(tableId)) throw new TableSessionException(409, "当前牌桌已切换");
             List<TableView> missed = replayFrames(table, after, 201);
             SseEmitter emitter = streams.subscribe(table.tokenHash);
-            if (after < 0 || after > table.sequence || missed.size() > 200) streams.send(emitter, "reset", project(table));
-            else if (missed.isEmpty()) streams.send(emitter, "table", project(table));
-            else missed.forEach(view -> streams.send(emitter, "table", view));
+            if (after < 0 || after > table.sequence || missed.size() > 200) streams.send(table.tokenHash, emitter, "reset", project(table));
+            else if (missed.isEmpty()) streams.send(table.tokenHash, emitter, "table", project(table));
+            else missed.forEach(view -> streams.send(table.tokenHash, emitter, "table", view));
             schedule(table, table.stepRequested);
             return emitter;
         }
@@ -628,7 +653,7 @@ public class GameTableService {
         } catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 
-    @PreDestroy void close() { workers.shutdownNow(); }
+    @PreDestroy void close() { cleanup.shutdownNow(); workers.shutdownNow(); }
 
     record SavedTable(TournamentId id, PlayerId humanId, String displayName, List<PlayerId> players,
                       List<String> personas, List<TableView.ActionLogView> actions, List<TableChatMessage> chat,

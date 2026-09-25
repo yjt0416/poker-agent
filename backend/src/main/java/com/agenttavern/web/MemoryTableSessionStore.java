@@ -1,6 +1,7 @@
 package com.agenttavern.web;
 
 import com.agenttavern.web.port.TableSessionStore;
+import java.time.Instant;
 import java.util.*;
 
 final class MemoryTableSessionStore implements TableSessionStore {
@@ -15,5 +16,11 @@ final class MemoryTableSessionStore implements TableSessionStore {
     }
     public synchronized List<Frame> frames(String hash, long after, int limit) {
         return history.getOrDefault(hash, List.of()).stream().filter(f -> f.sequence() > after).limit(limit).toList();
+    }
+    public synchronized List<UUID> purgeExpired(Instant cutoff) {
+        var expired = sessions.values().stream().filter(s -> !s.expiresAt().isAfter(cutoff))
+                .limit(500).toList();
+        expired.forEach(s -> { sessions.remove(s.tokenHash()); history.remove(s.tokenHash()); });
+        return expired.stream().map(Session::tournamentId).toList();
     }
 }

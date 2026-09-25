@@ -4,7 +4,7 @@ Agent Tavern 是一款以多 Agent 为核心的趣味德州扑克游戏。玩家
 
 ## 当前可玩版本
 
-截至 2026-09-26：大厅、选角、实时同步、结果页和基础回放已实现；真实 PostgreSQL 会话恢复和事务回滚已验收，并补齐整栈启动配置、健康检查和 CI 冒烟流程。同场锦标赛内的 Agent 记忆、跨手情绪和发言去重已接通，已有可关闭的牌桌短音效、轻量动态反馈和匿名本地战绩。DeepSeek 默认模型、单实例请求及输出上限、业务指标已更新；断开 SSE 后的通知异常不会影响已提交牌局。**尚未完成容器及公开部署验收**。功能清单见 [P0 进度](docs/reviews/2026-09-12-p0-progress.md)，最新验证见[部署与验收](docs/deployment.md)。
+截至 2026-09-26：大厅、选角、实时同步、结果页和基础回放已实现；真实 PostgreSQL 会话恢复和事务回滚已验收，并补齐整栈启动配置、健康检查和 CI 冒烟流程。同场锦标赛内的 Agent 记忆、跨手情绪和发言去重已接通，已有可关闭的牌桌短音效、轻量动态反馈和匿名本地战绩。DeepSeek 默认模型、单实例请求及输出上限、业务指标已更新；断开 SSE 后的通知异常不会影响已提交牌局，过期会话及关联私有数据会定时清理。**尚未完成容器及公开部署验收**。功能清单见 [P0 进度](docs/reviews/2026-09-12-p0-progress.md)，最新验证见[部署与验收](docs/deployment.md)。
 
 - 精细化中国幻想茶馆界面、8 名统一风格 Q 版角色资产与本土化人物背景；
 - 玩家对 5 个 Agent 的真实牌局，服务端校验弃牌、过牌、跟注、加注和全下；
@@ -52,7 +52,7 @@ npm run dev
 
 打开 <http://localhost:5173>。默认 `local` profile 使用进程内存储，不要求 PostgreSQL 或 LLM 密钥；**后端进程退出会丢失 local 牌局**。后端未启动时，大厅显示连接错误，不会自动创建模拟牌局。
 
-需要数据库持久化时，设置 `SPRING_PROFILES_ACTIVE=postgres`、`DATABASE_URL`（JDBC URL）、`DATABASE_USERNAME`、`DATABASE_PASSWORD` 后启动；Flyway 自动执行迁移。当前仅支持单后端实例，会话有效期 8 小时。另开一桌会替换当前浏览器会话，暂未提供旧桌历史列表。
+需要数据库持久化时，设置 `SPRING_PROFILES_ACTIVE=postgres`、`DATABASE_URL`（JDBC URL）、`DATABASE_USERNAME`、`DATABASE_PASSWORD` 后启动；Flyway 自动执行迁移。当前仅支持单后端实例，会话有效期 8 小时；过期数据再保留 24 小时，随后每 15 分钟分批清理会话、回放与对应锦标赛私有数据。另开一桌会替换当前浏览器会话，暂未提供旧桌历史列表。
 
 ## 启用 DeepSeek
 
@@ -78,7 +78,7 @@ $env:DEEPSEEK_API_KEY="<你的新密钥>"
 
 ## 验证项目
 
-当前本机验收：后端 328 项、前端 22 项、Chromium E2E 7 项通过，前端生产构建与 `npm audit --audit-level=high` 通过；真实 PostgreSQL 的 LocalIT 契约 12 项通过（9 项领域持久化、3 项 Web 恢复/回滚/私有记忆恢复）。本机真实 PostgreSQL 后端通过健康、失效 SSE、开桌、聊天幂等、SSE 即时帧与会话回放冒烟；修复断开 SSE 后，完成五轮 40 桌/16 并发的直接后端验收，未再出现 Agent 任务中断。无 Docker 的对应容器用例跳过，容器整栈未验收。E2E 含自动 WCAG A/AA 检查及截图产物，尚无截图差异回归基线。
+当前本机验收：后端 330 项、前端 22 项、Chromium E2E 7 项通过，前端生产构建与 `npm audit --audit-level=high` 通过；真实 PostgreSQL 的 LocalIT 契约 13 项通过（9 项领域持久化、4 项 Web 恢复/回滚/私有记忆恢复/过期数据清理）。本机真实 PostgreSQL 后端通过健康、失效 SSE、开桌、聊天幂等、SSE 即时帧与会话回放冒烟；修复断开 SSE 后，完成五轮 40 桌/16 并发的直接后端验收，未再出现 Agent 任务中断。无 Docker 的对应容器用例跳过，容器整栈未验收。E2E 含自动 WCAG A/AA 检查及截图产物，尚无截图差异回归基线。
 
 前端与浏览器测试（先启动 local 后端；Playwright 会按需启动 Vite）：
 

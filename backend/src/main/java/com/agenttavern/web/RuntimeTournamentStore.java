@@ -7,6 +7,7 @@ import com.agenttavern.tournament.port.TournamentCommit;
 import com.agenttavern.tournament.port.TournamentStore;
 import com.agenttavern.tournament.port.TournamentWriteResult;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.ConcurrentModificationException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,6 +23,14 @@ final class RuntimeTournamentStore implements TournamentStore {
         State before = state;
         try { return work.get(); }
         catch (RuntimeException error) { state = before; throw error; }
+    }
+
+    synchronized void removeAll(Collection<TournamentId> ids) {
+        Map<TournamentId, StoredTournament> tournaments = new LinkedHashMap<>(state.tournaments());
+        Map<TournamentId, List<TournamentEventEnvelope>> events = copyEvents(state.events());
+        Map<TournamentId, Map<UUID, TournamentWriteResult>> receipts = copyReceipts(state.receipts());
+        ids.forEach(id -> { tournaments.remove(id); events.remove(id); receipts.remove(id); });
+        state = new State(Map.copyOf(tournaments), Map.copyOf(events), Map.copyOf(receipts));
     }
 
     @Override
