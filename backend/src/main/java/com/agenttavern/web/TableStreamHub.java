@@ -15,7 +15,7 @@ class TableStreamHub {
     TableStreamHub() {
         heartbeat.scheduleAtFixedRate(() -> connections.values().forEach(list -> list.forEach(emitter -> {
             try { emitter.send(SseEmitter.event().comment("heartbeat")); }
-            catch (Exception error) { emitter.complete(); list.remove(emitter); }
+            catch (Exception error) { list.remove(emitter); }
         })), 15, 15, TimeUnit.SECONDS);
     }
     SseEmitter subscribe(String hash) {
@@ -25,19 +25,21 @@ class TableStreamHub {
         list.add(emitter);
         Runnable remove = () -> { list.remove(emitter); };
         emitter.onCompletion(remove);
-        emitter.onTimeout(() -> { remove.run(); emitter.complete(); });
+        emitter.onTimeout(remove);
         emitter.onError(error -> remove.run());
         return emitter;
     }
     void send(SseEmitter emitter, String name, TableView view) {
         try { emitter.send(SseEmitter.event().id(Long.toString(view.sequence())).name(name).data(view)); }
-        catch (Exception error) { emitter.complete(); }
+        catch (Exception error) { connections.values().forEach(list -> list.remove(emitter)); }
     }
     void publish(String hash, TableView view) {
         connections.getOrDefault(hash, new CopyOnWriteArrayList<>()).forEach(emitter -> send(emitter, "table", view));
     }
     @PreDestroy void close() {
         heartbeat.shutdownNow();
-        connections.values().forEach(list -> list.forEach(SseEmitter::complete));
+        connections.values().forEach(list -> list.forEach(emitter -> {
+            try { emitter.complete(); } catch (RuntimeException ignored) { /* Already disconnected. */ }
+        }));
     }
 }

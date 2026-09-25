@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
 async function create(page: Page, spectator = false) {
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: '今夜，和谁过招？' })).toBeVisible()
   if (spectator) await page.getByRole('button', { name: 'AI 决策剧场', exact: true }).click()
   await page.getByRole('button', { name: '落座，开局 →' }).click()
@@ -14,16 +14,16 @@ test('player chat reaches a second window, survives reload, and appears in repla
   await create(page)
   const before = await (await page.request.get('/api/tables/current')).json()
   const second = await context.newPage()
-  await second.goto('/')
+  await second.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(second.getByRole('region', { name: '扑克牌桌' })).toBeVisible()
   await page.getByRole('textbox', { name: '牌桌发言' }).fill('浏览器验收：今晚慢慢喝茶。')
   await page.getByRole('button', { name: '发送到牌桌 ↗' }).click()
   await expect(second.locator('.agent-speech')).toContainText('今晚慢慢喝茶')
-  await page.reload()
+  await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('.agent-speech')).toContainText('今晚慢慢喝茶')
   expect((await (await page.request.get('/api/tables/current')).json()).tableId).toBe(before.tableId)
-  // Exact action is chosen by the server's current legal range.
-  await page.getByRole('button', { name: /FOLD · F/ }).click()
+  // Check or call is legal at every non-all-in human turn; folding is disabled when checking is free.
+  await page.getByRole('button', { name: /CHECK \/ CALL · C/ }).click()
   await expect.poll(async () => (await (await page.request.get('/api/tables/current')).json()).version).toBeGreaterThan(before.version)
   await page.getByRole('button', { name: '牌局回放', exact: true }).click()
   await expect(page.getByRole('slider', { name: '回放时间轴' })).toBeVisible()
@@ -83,7 +83,7 @@ test('mobile controls fit, and keyboard typing never folds the player', async ({
 
 test('sound settings unlock, mute and preserve reduced motion on mobile', async ({ page }) => {
   await page.setViewportSize({width:390,height:844})
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.getByText('声效',{exact:true}).click()
   await page.getByRole('button',{name:'开启音效',exact:true}).click()
   await expect(page.getByRole('button',{name:'静音',exact:true})).toHaveAttribute('aria-pressed','true')
@@ -92,7 +92,7 @@ test('sound settings unlock, mute and preserve reduced motion on mobile', async 
   await page.getByRole('slider',{name:'音效音量'}).fill('25')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
   expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa']).analyze()).violations).toEqual([])
-  await page.reload()
+  await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByText('声效',{exact:true}).click()
   await expect(page.getByRole('button',{name:'开启音效',exact:true})).toBeVisible()
   await expect(page.getByRole('checkbox',{name:'减少动态效果'})).toBeChecked()
@@ -100,9 +100,9 @@ test('sound settings unlock, mute and preserve reduced motion on mobile', async 
 })
 
 test('anonymous local career survives reload and requires confirmation to clear', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.evaluate(()=>localStorage.setItem('agent-tavern.career.v1',JSON.stringify({games:2,wins:1,hands:8,netChips:3000,biggestPot:4200,actions:{FOLD:2,CHECK:1,CALL:4,RAISE:2,ALL_IN:0},opponents:{},cursors:{},completedTables:[],tablePots:{}})))
-  await page.reload()
+  await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('button',{name:'本地战绩'}).click()
   await expect(page.getByRole('heading',{name:'我的茶馆战绩'})).toBeVisible()
   await expect(page.getByText('50%')).toBeVisible();await expect(page.getByText('+3,000')).toBeVisible()
@@ -110,12 +110,12 @@ test('anonymous local career survives reload and requires confirmation to clear'
   await expect(page.getByText('此操作无法撤销。')).toBeVisible()
   await page.getByRole('button',{name:'确认清除'}).click()
   await expect(page.getByText('0%',{exact:true})).toBeVisible()
-  await page.reload();await page.getByRole('button',{name:'本地战绩'}).click()
+  await page.reload({ waitUntil: 'domcontentloaded' });await page.getByRole('button',{name:'本地战绩'}).click()
   await expect(page.getByText('0%',{exact:true})).toBeVisible()
 })
 
 test('lobby and table meet automated WCAG A/AA checks', async ({ page }) => {
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('button', { name: '落座，开局 →' })).toBeEnabled()
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze()).violations).toEqual([])
   await page.getByRole('button', { name: '落座，开局 →' }).click()

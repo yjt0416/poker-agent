@@ -528,6 +528,7 @@ public class GameTableService {
     private TableView commit(RuntimeTable table, Runnable action) {
         SavedTable before = table.snapshot();
         TournamentExecution previous = table.execution;
+        TableView view;
         try {
             java.util.function.Supplier<TableView> persist = () -> transactions.execute(status -> {
                 action.run();
@@ -538,14 +539,19 @@ public class GameTableService {
                         new TableSessionStore.Frame(table.sequence, json.writeValueAsString(projection)));
                 return projection;
             });
-            TableView view = store instanceof RuntimeTournamentStore memory ? memory.transaction(persist) : persist.get();
-            streams.publish(table.tokenHash, view);
-            return view;
+            view = store instanceof RuntimeTournamentStore memory ? memory.transaction(persist) : persist.get();
         } catch (RuntimeException error) {
             table.restore(before);
             table.execution = previous;
             throw error;
         }
+        try {
+            streams.publish(table.tokenHash, view);
+        } catch (RuntimeException error) {
+            org.slf4j.LoggerFactory.getLogger(GameTableService.class).warn(
+                    "Committed table update could not be pushed ({})", error.getClass().getSimpleName());
+        }
+        return view;
     }
 
     private void schedule(RuntimeTable table, boolean oneStep) {
@@ -567,8 +573,10 @@ public class GameTableService {
                     }
                     success = true;
                 } catch (RuntimeException error) {
-                    org.slf4j.LoggerFactory.getLogger(GameTableService.class).warn("Agent task stopped for table {} ({})",
-                            table.id.value(), error.getClass().getSimpleName());
+                    org.slf4j.LoggerFactory.getLogger(GameTableService.class).warn(
+                            "Agent task stopped for table {} ({}: {}; at {})",
+                            table.id.value(), error.getClass().getSimpleName(), error.getMessage(),
+                            error.getStackTrace().length == 0 ? "unknown" : error.getStackTrace()[0]);
                 } finally {
                     synchronized (table) {
                         table.scheduled = false;

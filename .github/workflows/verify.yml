@@ -64,6 +64,8 @@ jobs:
           exit 1
       - run: npm run test:e2e
         working-directory: frontend
+      - name: Exercise concurrent isolated tables
+        run: python3 scripts/load-smoke.py --tables 12 --workers 6
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

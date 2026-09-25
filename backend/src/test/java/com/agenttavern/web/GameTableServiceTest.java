@@ -24,7 +24,10 @@ class GameTableServiceTest {
     final List<TableStreamHub> hubs = new ArrayList<>();
 
     GameTableService service(AgentDecisionProvider provider, TableSessionStore archive) {
-        var hub = new TableStreamHub(); hubs.add(hub);
+        return service(provider, archive, new TableStreamHub());
+    }
+    GameTableService service(AgentDecisionProvider provider, TableSessionStore archive, TableStreamHub hub) {
+        hubs.add(hub);
         var commands = new TournamentCommandService(store,clock,()->Deck.standard().shuffled(new Random(42)));
         var service = new GameTableService(commands,provider,store,archive,json,clock,
                 new StaticListableBeanFactory().getBeanProvider(PlatformTransactionManager.class),hub,new Random(11));
@@ -54,6 +57,19 @@ class GameTableServiceTest {
         var duplicate=svc.act(created.sessionToken(),action);
         assertThat(duplicate.version()).isEqualTo(next.version());assertThat(duplicate.sequence()).isEqualTo(next.sequence());
         assertThatThrownBy(()->svc.act(created.sessionToken(),action(turn,"CALL"))).isInstanceOf(TableSessionException.class).hasMessageContaining("已更新");
+    }
+
+    @Test void failedNotificationCannotUndoACommittedTable() {
+        var brokenHub = new TableStreamHub() {
+            @Override void publish(String hash, TableView view) {
+                throw new IllegalStateException("disconnected stream");
+            }
+        };
+        var svc = service(GameTableServiceTest::call, sessions, brokenHub);
+        var created = svc.createTable("", "SPECTATOR", null);
+        assertThat(svc.current(created.sessionToken())).isEqualTo(created.view());
+        assertThat(svc.replay(created.sessionToken(), created.view().tableId(), 0).frames())
+                .containsExactly(created.view());
     }
 
     @Test void slowAgentDoesNotBlockReadsOrChat() throws Exception {
