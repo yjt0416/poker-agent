@@ -77,7 +77,7 @@ LocalIT 仅接受回环地址且库名包含独立 `test`/`it` 标记；只删�
 
 公网入口应有唯一受信任的边缘代理。当前 Nginx 使用连接 IP 做限流；再套代理时会按该代理的 IP 合并计数，需根据实际拓扑配置可信来源，不能直接信任客户端提供的转发头。
 
-正式公开发布仍缺：异地备份保留与正式故障恢复演练、生产负载验收、域名/HTTPS 验收及实际容器运行。真实 DeepSeek 适配器已在独立本机实例联调通过；此次密钥曾出现在聊天中，正式部署前必须撤销并更换。当前只支持单个后端实例，不能直接水平扩容。请求限额只是基础费用保护；若需要严格预算，应结合 DeepSeek 账户侧限额或持久化用量控制。
+正式公开发布仍缺：异地备份保留与正式故障恢复演练、生产负载验收、域名/HTTPS 及目标主机验收。GitHub Actions 已在 Linux Docker 环境通过整栈运行和容器备份恢复校验；真实 DeepSeek 适配器已在独立本机实例联调通过。此次密钥曾出现在聊天中，正式部署前必须撤销并更换。当前只支持单个后端实例，不能直接水平扩容。请求限额只是基础费用保护；若需要严格预算，应结合 DeepSeek 账户侧限额或持久化用量控制。
 
 ## 2026-09-21 实际验证范围
 
@@ -125,3 +125,7 @@ Agent 记忆与情绪接入后，后端 317 项常规测试、真实 PostgreSQL 
 使用独立的本机 PostgreSQL 后端实例接入真实 `deepseek-flash`，将模型请求额度限制为 2 次/小时。测试牌桌自动推进；实例指标记录 2 次请求、883 个 Token，失败、非法动作与安全降级均为 0。该实例随后停止；密钥只通过临时进程环境变量传递，未写入仓库或 `.env`。由于密钥已在聊天中披露，不得继续作为正式部署密钥。
 
 重启后的本地预览后端和前端健康；前端 22 项测试、生产构建、`npm audit --audit-level=high`（0 项漏洞）、Chromium 7 项 E2E 与 PostgreSQL 后端冒烟再次通过。本机 SSH 公钥指纹与用户提供的 WindowsPC 指纹一致，`ssh -T git@github.com` 认证为目标 GitHub 账户。仓库尚无 Git 远端；当前只收到 GitHub 个人主页，需目标仓库 URL 才能推送并触发远端 CI。本机仍无 Docker Engine，容器与 HTTPS 部署尚未完成。
+
+## 2026-10-01 GitHub 公开仓库与首次远端 CI
+
+代码已推送到公开仓库 [`yjt0416/poker-agent`](https://github.com/yjt0416/poker-agent) 的 `main` 分支。首次 [GitHub Actions 运行](https://github.com/yjt0416/poker-agent/actions/runs/36824219477) 的 `game` 与 `compose-smoke` 均通过：前者执行后端及 PostgreSQL 契约、前端测试/构建/安全审计、Chromium E2E 与并发牌桌冒烟；后者在 Linux Docker 上构建整栈，验证 Nginx 代理、SSE、数据库重启恢复及容器备份恢复。该结果验证了临时 CI 环境，不代表实际公网主机、域名、HTTPS、生产流量和异地备份已验收。本机仍未安装 Docker Engine。
