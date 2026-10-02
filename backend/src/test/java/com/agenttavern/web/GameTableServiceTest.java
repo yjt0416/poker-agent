@@ -85,6 +85,21 @@ class GameTableServiceTest {
         do {TableView v=service.current(token);if(condition.test(v))return v;Thread.sleep(5);}while(System.nanoTime()<end);
         throw new AssertionError("Timed out waiting for table state");
     }
+    static TableView advanceWhenIdle(GameTableService service,String token,TableCommand command)
+            throws InterruptedException {
+        long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+        while(true) {
+            try {
+                return service.advanceSpectator(token,command);
+            } catch(TableSessionException busy) {
+                if(busy.status()!=409 || !"Agent 正在思考，请稍候".equals(busy.getMessage())) throw busy;
+                // A committed version can be read just before the worker releases its busy flag.
+                // Retry the same command so a previously accepted step remains idempotent.
+                if(System.nanoTime()>=end) throw new AssertionError("Timed out waiting for idle Agent",busy);
+                Thread.sleep(5);
+            }
+        }
+    }
     @AfterEach void close() {services.forEach(GameTableService::close);hubs.forEach(TableStreamHub::close);}
 
     @Test void duplicateActionDoesNotActAgainAndStaleVersionIsRejected() throws Exception {
@@ -173,7 +188,7 @@ class GameTableServiceTest {
             if(view.status().equals("BETWEEN_HANDS")) {
                 assertThat(view.board()).hasSize(5);view=svc.nextHand(token,command(view));
             } else if(view.canAdvance()) {
-                long version=view.version();svc.advanceSpectator(token,command(view));view=await(svc,token,v->v.version()>version);
+                long version=view.version();advanceWhenIdle(svc,token,command(view));view=await(svc,token,v->v.version()>version);
             } else {
                 if(acceptedChat==null) {
                     acceptedChat=new TableTalkRequest("胜负桌上见",UUID.randomUUID(),view.tableId(),view.version());
@@ -290,7 +305,7 @@ class GameTableServiceTest {
         assertThat(next.holeCards()).isEmpty();
         assertThat(next.legalActions().types()).isEmpty();
         assertThat(next.canAdvance()).isTrue();
-        restored.advanceSpectator(token,command(next));
+        advanceWhenIdle(restored,token,command(next));
         assertThat(await(restored,token,v->v.version()>next.version()).version()).isEqualTo(next.version()+1);
         var frames=restored.replay(token,ended.tableId(),0).frames();
         assertThat(frames).filteredOn(frame->frame.sequence()==turn.sequence()).singleElement()
@@ -307,7 +322,7 @@ class GameTableServiceTest {
         var created=svc.createTable("","SPECTATOR",null);var view=created.view();
         for(int hand=0;hand<5;hand++) {
             for(int action=0;action<150&&view.status().equals("IN_HAND");action++) {
-                long version=view.version();svc.advanceSpectator(created.sessionToken(),command(view));
+                long version=view.version();advanceWhenIdle(svc,created.sessionToken(),command(view));
                 view=await(svc,created.sessionToken(),v->v.version()>version);
             }
             assertThat(view.status()).isNotEqualTo("IN_HAND");
@@ -326,7 +341,7 @@ class GameTableServiceTest {
                     List.of("private-note-"+o.persona().key()));};
         var svc=service(provider,sessions);var created=svc.createTable("","SPECTATOR",null);var view=created.view();
         for(int i=0;i<40&&view.status().equals("IN_HAND");i++) {
-            long version=view.version();svc.advanceSpectator(created.sessionToken(),command(view));
+            long version=view.version();advanceWhenIdle(svc,created.sessionToken(),command(view));
             view=await(svc,created.sessionToken(),v->v.version()>version);
         }
         assertThat(view.status()).isEqualTo("BETWEEN_HANDS");
@@ -338,7 +353,7 @@ class GameTableServiceTest {
         svc.close();var restored=service(provider,sessions);
         assertThat(restored.current(created.sessionToken())).isEqualTo(view);
         var next=restored.nextHand(created.sessionToken(),command(view));observations.clear();
-        restored.advanceSpectator(created.sessionToken(),command(next));
+        advanceWhenIdle(restored,created.sessionToken(),command(next));
         var observation=observations.poll(5,TimeUnit.SECONDS);assertThat(observation).isNotNull();
         assertThat(observation.memory().notes()).contains("private-note-"+observation.persona().key());
         assertThat(observation.memory().opponents()).isNotEmpty();
@@ -346,7 +361,7 @@ class GameTableServiceTest {
         assertThat(json.writeValueAsString(restored.replay(created.sessionToken(),committed.tableId(),0)))
                 .doesNotContain("private-note", "opponents", "recentUtterances", "memoryUpdates");
         var other=restored.createTable("","SPECTATOR",null);observations.clear();
-        restored.advanceSpectator(other.sessionToken(),command(other.view()));
+        advanceWhenIdle(restored,other.sessionToken(),command(other.view()));
         assertThat(observations.poll(5,TimeUnit.SECONDS).memory()).isEqualTo(AgentMemory.empty());
     }
 }
