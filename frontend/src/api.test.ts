@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, command, enterTable, subscribeTable } from './api'
+import { ApiError, command, enterTable, getReplay, subscribeTable } from './api'
 import { tableView } from './test/fixtures'
 afterEach(()=>{vi.unstubAllGlobals();vi.useRealTimers()})
 describe('table protocol',()=>{
@@ -13,6 +13,18 @@ describe('table protocol',()=>{
   })
   it('reports connection errors without creating another table',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));await expect(enterTable()).rejects.toEqual(new ApiError(0,'无法连接牌桌服务，请确认后端已启动'));
+  })
+  it('cancels the underlying replay request when the page leaves',async()=>{
+    let transportSignal!: AbortSignal
+    vi.stubGlobal('fetch',vi.fn((_path, init)=>new Promise((_resolve,reject)=>{
+      transportSignal=init.signal
+      transportSignal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')))
+    })))
+    const controller=new AbortController()
+    const result=getReplay(tableView(),3,controller.signal).catch(error=>error)
+    controller.abort()
+    expect(transportSignal.aborted).toBe(true)
+    expect(await result).toBeInstanceOf(ApiError)
   })
   it('reconnects from the received cursor and cancels retries on unmount',()=>{
     vi.useFakeTimers();const instances:FakeStream[]=[];

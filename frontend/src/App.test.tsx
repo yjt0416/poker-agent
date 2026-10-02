@@ -32,9 +32,9 @@ describe('live game flow',()=>{
   it('opens anonymous local career and requires a second click to clear it',async()=>{
     localStorage.setItem('agent-tavern.career.v1',JSON.stringify({games:2,wins:1,hands:8,netChips:3000,biggestPot:4200,actions:{FOLD:2,CHECK:1,CALL:4,RAISE:2,ALL_IN:0},opponents:{},cursors:{},completedTables:[],tablePots:{}}))
     vi.mocked(api.enterTable).mockResolvedValue(null);render(<App/>);await screen.findByRole('button',{name:'本地战绩'});fireEvent.click(screen.getByRole('button',{name:'本地战绩'}))
-    await screen.findByRole('heading',{name:'我的茶馆战绩'});expect(screen.getByText('50%')).toBeInTheDocument();expect(screen.getByText('+3,000')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'清除本地战绩'}));expect(screen.getByText('此操作无法撤销。')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'取消'}));expect(screen.queryByText('此操作无法撤销。')).not.toBeInTheDocument();expect(screen.getByText('完赛').parentElement).toHaveTextContent('2局')
+    expect(await screen.findByRole('heading',{name:'我的茶馆战绩'})).toHaveFocus();expect(screen.getByText('50%')).toBeInTheDocument();expect(screen.getByText('+3,000')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'清除本地战绩'}));expect(screen.getByRole('alert')).toHaveTextContent('此操作无法撤销。');expect(screen.getByRole('button',{name:'确认清除'})).toHaveFocus()
+    fireEvent.click(screen.getByRole('button',{name:'取消'}));expect(screen.queryByRole('alert')).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'清除本地战绩'})).toHaveFocus();expect(screen.getByText('完赛').parentElement).toHaveTextContent('2局')
   })
   it('creates the selected roster',async()=>{
     vi.mocked(api.enterTable).mockResolvedValue(null);vi.mocked(api.createTable).mockResolvedValue(tableView());render(<App/>);
@@ -54,11 +54,13 @@ describe('live game flow',()=>{
   })
   it('shows final rankings without a next-hand action',async()=>{
     vi.mocked(api.enterTable).mockResolvedValue(tableView({status:'COMPLETE',rankings:[{seat:5,name:'旅人',sprite:7,stack:60000,position:1}]}));render(<App/>);
-    await screen.findByRole('heading',{name:'今夜的赢家'});expect(screen.queryByRole('button',{name:/开始下一手牌/})).not.toBeInTheDocument();expect(screen.getByText('#1')).toBeInTheDocument();
+    expect(await screen.findByRole('heading',{name:'今夜的赢家'})).toHaveFocus();expect(screen.queryByRole('button',{name:/开始下一手牌/})).not.toBeInTheDocument();expect(screen.queryByRole('button',{name:'动态'})).not.toBeInTheDocument();expect(screen.getByText('#1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'查看本地战绩'}));expect(await screen.findByRole('heading',{name:'我的茶馆战绩'})).toHaveFocus();
   })
-  it('offers spectator controls after elimination',async()=>{
+  it('offers spectator controls and removes table talk after elimination',async()=>{
     vi.mocked(api.enterTable).mockResolvedValue(tableView({canAdvance:true,holeCards:[],legalActions:{types:[],callAmount:0,minRaiseTo:null,maxRaiseTo:0}}));render(<App/>);
     await screen.findByRole('button',{name:'推进一步'});expect(screen.queryByRole('button',{name:/FOLD/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox',{name:'牌桌发言'})).not.toBeInTheDocument();
   })
   it('keeps shortcuts out of the chat editor',async()=>{
     render(<App/>);await screen.findByRole('button',{name:/加注至 816/});fireEvent.keyDown(screen.getByRole('textbox',{name:'牌桌发言'}),{key:'f'});expect(api.command).not.toHaveBeenCalled();
@@ -66,6 +68,6 @@ describe('live game flow',()=>{
   })
   it('opens a session-scoped replay',async()=>{
     render(<App/>);await screen.findByRole('button',{name:/加注至 816/});fireEvent.click(screen.getByRole('button',{name:'回放'}));
-    await screen.findByRole('slider',{name:'回放时间轴'});expect(api.getReplay).toHaveBeenCalledWith(expect.objectContaining({tableId:'table-1'}),0);
+    await screen.findByRole('slider',{name:'回放时间轴'});expect(api.getReplay).toHaveBeenCalledWith(expect.objectContaining({tableId:'table-1'}),0,expect.any(AbortSignal));
   })
 })

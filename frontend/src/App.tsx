@@ -68,7 +68,7 @@ export function App() {
       <button className="brand brand-button" onClick={lobby} aria-label="返回百兽茶馆大厅"><span className="brand-mark">兽</span><span><b>百兽茶馆</b><small>AGENT TAVERN</small></span></button>
       <div className="table-title"><span className="eyebrow">戌时 · 临江厅</span><h1>{page==='lobby'?'今夜茶局':page==='replay'?'重看风云':page==='career'?'茶馆账本':watching?'AI 决策剧场':'无上限德州扑克'}</h1>
         {table && page==='table' && <div className="compact-toolbar"><span>第 {table.handNumber} 手 · {streetNames[table.street]}</span>
-          <button onClick={lobby}>大厅</button><button onClick={replay}>回放</button><button aria-expanded={logOpen} onClick={()=>setLogOpen(v=>!v)}>动态</button></div>}
+          <button onClick={lobby}>大厅</button><button onClick={replay}>回放</button>{table.status!=='COMPLETE'&&<button aria-expanded={logOpen} onClick={()=>setLogOpen(v=>!v)}>动态</button>}</div>}
       </div>
       <div className="header-actions"><span className={`connection connection-${online?'online':'demo'}`} role="status" title={notice}><i/>{notice}</span>
         {table && <button className="retry-button" onClick={()=>void game.refresh()}>{online?'同步':'重连'}</button>}
@@ -122,7 +122,7 @@ export function App() {
         </section>
         <aside className={`side-panel right-panel ${logOpen?'compact-open':''}`}><button className="drawer-close" aria-label="关闭牌桌动态" onClick={()=>setLogOpen(false)}>×</button><PanelTitle title="牌桌动态" subtitle="ACTION LOG"/>
           <div className="log-list" role="region" aria-label="行动日志" tabIndex={0}>{[...table.actionLog].reverse().filter(l=>focus===null||l.seat===focus||l.seat===-1).map(log=><article className="log-item" key={log.sequence}><i className={`log-dot ${log.action.includes('弃牌')?'green':log.action.includes('加注')?'red':'gold'}`}/><div><span><b>{log.name}</b> {log.action}</span><p>{log.summary}</p></div></article>)}</div>
-          {table.mode==='PLAYER' && <div className="table-talk"><div className="talk-heading"><label htmlFor="table-chat">牌桌发言</label><small>{[...chat].length}/240</small></div><textarea id="table-chat" value={chat} maxLength={480} onChange={e=>setChat([...e.target.value].slice(0,240).join(''))} placeholder="说点什么影响对手的判断……" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void talk()}}}/><button disabled={disabled||!chat.trim()} onClick={()=>void talk()}>发送到牌桌 ↗</button><p className="talk-note">5 秒一次 · 对手会听，但未必相信</p></div>}
+          {table.mode==='PLAYER' && !watching && <div className="table-talk"><div className="talk-heading"><label htmlFor="table-chat">牌桌发言</label><small>{[...chat].length}/240</small></div><textarea id="table-chat" value={chat} maxLength={480} onChange={e=>setChat([...e.target.value].slice(0,240).join(''))} placeholder="说点什么影响对手的判断……" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void talk()}}}/><button disabled={disabled||!chat.trim()} onClick={()=>void talk()}>发送到牌桌 ↗</button><p className="talk-note">5 秒一次 · 对手会听，但未必相信</p></div>}
         </aside>
       </section>
     </>}

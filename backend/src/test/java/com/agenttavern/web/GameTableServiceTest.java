@@ -3,13 +3,21 @@ package com.agenttavern.web;
 import static org.assertj.core.api.Assertions.*;
 import com.agenttavern.agents.*;
 import com.agenttavern.game.betting.*;
+import com.agenttavern.game.card.Card;
 import com.agenttavern.game.card.Deck;
+import com.agenttavern.game.card.Rank;
+import com.agenttavern.game.card.Suit;
+import com.agenttavern.tournament.*;
 import com.agenttavern.tournament.application.TournamentCommandService;
+import com.agenttavern.tournament.port.TournamentCommit;
 import com.agenttavern.web.port.TableSessionStore;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -27,10 +35,24 @@ class GameTableServiceTest {
         return service(provider, archive, new TableStreamHub());
     }
     GameTableService service(AgentDecisionProvider provider, TableSessionStore archive, TableStreamHub hub) {
+        return service(provider, archive, hub, 42);
+    }
+    GameTableService service(AgentDecisionProvider provider, TableSessionStore archive, int deckSeed) {
+        return service(provider, archive, new TableStreamHub(), deckSeed);
+    }
+    GameTableService service(AgentDecisionProvider provider, TableSessionStore archive, TableStreamHub hub, int deckSeed) {
+        return service(provider, archive, hub, () -> Deck.standard().shuffled(new Random(deckSeed)), 11);
+    }
+    GameTableService service(AgentDecisionProvider provider, TableSessionStore archive,
+            Supplier<Deck> decks, int tableSeed) {
+        return service(provider, archive, new TableStreamHub(), decks, tableSeed);
+    }
+    GameTableService service(AgentDecisionProvider provider, TableSessionStore archive, TableStreamHub hub,
+            Supplier<Deck> decks, int tableSeed) {
         hubs.add(hub);
-        var commands = new TournamentCommandService(store,clock,()->Deck.standard().shuffled(new Random(42)));
+        var commands = new TournamentCommandService(store,clock,decks);
         var service = new GameTableService(commands,provider,store,archive,json,clock,
-                new StaticListableBeanFactory().getBeanProvider(PlatformTransactionManager.class),hub,new Random(11));
+                new StaticListableBeanFactory().getBeanProvider(PlatformTransactionManager.class),hub,new Random(tableSeed));
         services.add(service); return service;
     }
     static AgentDecision call(AgentObservation o) {
@@ -42,6 +64,22 @@ class GameTableServiceTest {
     }
     static TableCommand command(TableView v) {return new TableCommand(UUID.randomUUID(),v.tableId(),v.version());}
     static PlayerActionRequest action(TableView v,String type) {return new PlayerActionRequest(type,null,UUID.randomUUID(),v.tableId(),v.version());}
+    static String tokenHash(String token) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(token.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+    static Deck immediateSettlementDeck() {
+        return Deck.ordered(List.of(
+                new Card(Suit.CLUBS, Rank.TWO), new Card(Suit.SPADES, Rank.ACE),
+                new Card(Suit.DIAMONDS, Rank.THREE), new Card(Suit.HEARTS, Rank.ACE),
+                new Card(Suit.CLUBS, Rank.FOUR),
+                new Card(Suit.CLUBS, Rank.FIVE), new Card(Suit.DIAMONDS, Rank.SEVEN),
+                new Card(Suit.HEARTS, Rank.NINE),
+                new Card(Suit.CLUBS, Rank.TEN), new Card(Suit.DIAMONDS, Rank.JACK),
+                new Card(Suit.CLUBS, Rank.QUEEN), new Card(Suit.DIAMONDS, Rank.KING)));
+    }
     static TableView await(GameTableService service,String token,Predicate<TableView> condition) throws Exception {
         long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
         do {TableView v=service.current(token);if(condition.test(v))return v;Thread.sleep(5);}while(System.nanoTime()<end);
@@ -126,43 +164,139 @@ class GameTableServiceTest {
         fail.set(false);assertThat(svc.act(created.sessionToken(),action(turn,"CALL")).version()).isGreaterThan(turn.version());
     }
 
-    @Test void fullAllInTournamentKeepsBoardChipsRankingsAndEliminatedViewerValid() throws Exception {
-        var svc=service(GameTableServiceTest::allIn,sessions);var created=svc.createTable("旅人","PLAYER",null);String token=created.sessionToken();
-        TableView view=created.view();boolean eliminated=false;
+    @Test void fullAllInTournamentKeepsBoardChipsRankingsAndWinnerChatBoundaryValid() throws Exception {
+        var svc=service(GameTableServiceTest::allIn,sessions,45);var created=svc.createTable("旅人","PLAYER",null);String token=created.sessionToken();
+        TableView view=created.view();TableTalkRequest acceptedChat=null;
         for(int i=0;i<100&&!view.status().equals("COMPLETE");i++) {
             view=await(svc,token,v->!v.status().equals("IN_HAND")||v.canAdvance()||Objects.equals(v.actorSeat(),5));
             if(view.status().equals("COMPLETE"))break;
             if(view.status().equals("BETWEEN_HANDS")) {
-                assertThat(view.board()).hasSize(5);eliminated|=view.canAdvance();view=svc.nextHand(token,command(view));
+                assertThat(view.board()).hasSize(5);view=svc.nextHand(token,command(view));
             } else if(view.canAdvance()) {
                 long version=view.version();svc.advanceSpectator(token,command(view));view=await(svc,token,v->v.version()>version);
-            } else view=svc.act(token,action(view,"ALL_IN"));
+            } else {
+                if(acceptedChat==null) {
+                    acceptedChat=new TableTalkRequest("胜负桌上见",UUID.randomUUID(),view.tableId(),view.version());
+                    view=svc.talk(token,acceptedChat);
+                }
+                view=svc.act(token,action(view,"ALL_IN"));
+            }
             assertThat(view.seats().stream().mapToLong(TableView.SeatView::stack).sum()+view.pot()).isEqualTo(60000);
         }
         assertThat(view.status()).isEqualTo("COMPLETE");assertThat(view.board()).hasSize(5);
+        assertThat(view.holeCards()).isEmpty();
         assertThat(view.rankings()).extracting(TableView.RankingView::position).containsExactlyInAnyOrder(1,2,3,4,5,6);
-        if(eliminated)assertThat(svc.current(token).canAdvance()).isTrue();
+        assertThat(view.seats().get(view.selfSeat()).status()).isEqualTo("WINNER");
+        assertThat(acceptedChat).isNotNull();
+        assertThat(svc.talk(token,acceptedChat)).isEqualTo(svc.current(token));
+        var completed=view;
+        assertThatThrownBy(()->svc.talk(token,new TableTalkRequest("冠军发言",UUID.randomUUID(),
+                completed.tableId(),completed.version())))
+                .isInstanceOf(TableSessionException.class)
+                .hasMessage("锦标赛已结束，不能继续发言");
         assertThatThrownBy(()->svc.nextHand(token,command(svc.current(token)))).hasMessageContaining("不能开始");
     }
 
+    @Test void nextHandThatSettlesFromBlindsArchivesItsActualBoardOutcomeAndPrivateCards() throws Exception {
+        var svc=service(GameTableServiceTest::call,sessions,
+                ()->Deck.standard().shuffled(new Random(42)),3);
+        var created=svc.createTable("旅人","PLAYER",null);
+        String token=created.sessionToken();
+        assertThat(created.view().actorSeat()).isEqualTo(5); // Prevents background agent work while arranging the boundary.
+        var session=sessions.find(tokenHash(token)).orElseThrow();
+        var saved=json.readValue(session.metadata(),GameTableService.SavedTable.class);
+        var seededSeats=new ArrayList<TournamentSeat>();
+        for(int seat=0;seat<6;seat++) {
+            if(seat==0) seededSeats.add(new TournamentSeat(saved.players().get(seat),seat,1,
+                    TournamentSeatStatus.FUNDED,null));
+            else if(seat==5) seededSeats.add(new TournamentSeat(saved.players().get(seat),seat,59_999,
+                    TournamentSeatStatus.FUNDED,null));
+            else seededSeats.add(new TournamentSeat(saved.players().get(seat),seat,0,
+                    TournamentSeatStatus.ELIMINATED,7-seat));
+        }
+        var checkpoint=new TournamentCheckpoint(saved.id(),TournamentMode.PLAYER,TournamentStatus.BETWEEN_HANDS,
+                seededSeats,4,112,14,Optional.empty(),Map.of());
+        Tournament.restore(checkpoint); // The fixture is a valid durable state, not a service-only shortcut.
+        var stored=store.load(saved.id()).orElseThrow();
+        store.commit(new TournamentCommit(UUID.randomUUID(),stored.version(),checkpoint,List.of()));
+        svc.close();
+
+        var resumed=service(GameTableServiceTest::call,sessions,GameTableServiceTest::immediateSettlementDeck,11);
+        var between=resumed.current(token);
+        assertThat(between.status()).isEqualTo("BETWEEN_HANDS");
+        var terminal=resumed.nextHand(token,command(between));
+
+        assertThat(terminal.status()).isEqualTo("COMPLETE");
+        assertThat(terminal.handNumber()).isEqualTo(113);
+        assertThat(terminal.board()).containsExactly(
+                new TableView.CardView("5","♣"),new TableView.CardView("7","♦"),
+                new TableView.CardView("9","♥"),new TableView.CardView("J","♦"),
+                new TableView.CardView("K","♦"));
+        assertThat(terminal.holeCards()).isEmpty();
+        assertThat(terminal.seats().stream().mapToLong(TableView.SeatView::stack).sum()).isEqualTo(60_000L);
+        assertThat(terminal.seats().get(0).status()).isEqualTo("ELIMINATED");
+        assertThat(terminal.seats().get(0).emotion()).isEqualTo("NERVOUS");
+        assertThat(terminal.seats().get(5).status()).isEqualTo("WINNER");
+        assertThat(terminal.actionLog()).extracting(TableView.ActionLogView::action)
+                .endsWith("开始第 113 手牌","本手结算");
+        assertThat(terminal.actionLog().getLast().summary()).isEqualTo("旅人收下 6001 筹码。");
+
+        var terminalSession=sessions.find(tokenHash(token)).orElseThrow();
+        var terminalState=json.readValue(terminalSession.metadata(),GameTableService.SavedTable.class);
+        assertThat(terminalState.lastBoard()).hasSize(5);
+        assertThat(terminalState.lastHumanHoleCards()).containsExactly(
+                new Card(Suit.SPADES,Rank.ACE),new Card(Suit.HEARTS,Rank.ACE));
+        assertThat(terminalSession.metadata()).doesNotContain("\"rank\":\"TWO\"","\"rank\":\"THREE\"");
+
+        resumed.close();
+        var restarted=service(GameTableServiceTest::call,sessions,GameTableServiceTest::immediateSettlementDeck,11);
+        assertThat(restarted.current(token)).isEqualTo(terminal);
+        var replay=restarted.replay(token,terminal.tableId(),0);
+        assertThat(replay.frames().getLast()).isEqualTo(terminal);
+        assertThat(replay.frames()).filteredOn(frame->frame.sequence()>=terminal.sequence())
+                .allSatisfy(frame->{
+                    assertThat(frame.handNumber()).isEqualTo(113);
+                    assertThat(frame.board()).hasSize(5);
+                    assertThat(frame.holeCards()).isEmpty();
+                    assertThat(frame.actionLog()).extracting(TableView.ActionLogView::action)
+                            .endsWith("开始第 113 手牌","本手结算");
+                });
+    }
+
     @Test void eliminatedHumanCanStartAndWatchTheNextHandWithoutPrivateCards() throws Exception {
-        var svc=service(o -> o.persona().equals(AgentRoster.all().getFirst())
+        AgentDecisionProvider provider=o -> o.persona().equals(AgentRoster.all().getFirst())
                 ? new AgentDecision(PlayerAction.fold(),"先歇一手。",AgentEmotion.CALM,"弃牌",List.of())
-                : allIn(o), sessions);
+                : allIn(o);
+        var svc=service(provider, sessions);
         var created=svc.createTable("淘汰验收","PLAYER",null);
         String token=created.sessionToken();
         var turn=await(svc,token,v->Objects.equals(v.actorSeat(),5));
+        assertThat(turn.holeCards()).hasSize(2);
         svc.act(token,action(turn,"ALL_IN"));
         var ended=await(svc,token,v->!v.status().equals("IN_HAND"));
         assertThat(ended.status()).isEqualTo("BETWEEN_HANDS");
         assertThat(ended.seats().get(5).status()).isEqualTo("ELIMINATED");
+        assertThat(ended.holeCards()).isEmpty();
         assertThat(ended.canAdvance()).isTrue();
-        var next=svc.nextHand(token,command(ended));
+        assertThatThrownBy(() -> svc.talk(token, new TableTalkRequest("场外施压", UUID.randomUUID(),
+                ended.tableId(), ended.version())))
+                .isInstanceOf(TableSessionException.class)
+                .hasMessage("已淘汰玩家只能观战，不能继续影响牌桌");
+        svc.close();
+        var restored=service(provider,sessions);
+        assertThat(restored.current(token)).isEqualTo(ended);
+        assertThat(restored.current(token).holeCards()).isEmpty();
+        var next=restored.nextHand(token,command(ended));
         assertThat(next.holeCards()).isEmpty();
         assertThat(next.legalActions().types()).isEmpty();
         assertThat(next.canAdvance()).isTrue();
-        svc.advanceSpectator(token,command(next));
-        assertThat(await(svc,token,v->v.version()>next.version()).version()).isEqualTo(next.version()+1);
+        restored.advanceSpectator(token,command(next));
+        assertThat(await(restored,token,v->v.version()>next.version()).version()).isEqualTo(next.version()+1);
+        var frames=restored.replay(token,ended.tableId(),0).frames();
+        assertThat(frames).filteredOn(frame->frame.sequence()==turn.sequence()).singleElement()
+                .satisfies(frame->assertThat(frame.holeCards()).hasSize(2));
+        assertThat(frames).filteredOn(frame->frame.sequence()>=ended.sequence())
+                .allSatisfy(frame->assertThat(frame.holeCards()).isEmpty());
     }
 
     @Test void localAgentsPlaySeveralHandsWithoutOpeningWithCollectiveStackCalls() throws Exception {

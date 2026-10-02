@@ -129,3 +129,19 @@ Agent 记忆与情绪接入后，后端 317 项常规测试、真实 PostgreSQL 
 ## 2026-10-01 GitHub 公开仓库与首次远端 CI
 
 代码已推送到公开仓库 [`yjt0416/poker-agent`](https://github.com/yjt0416/poker-agent) 的 `main` 分支。首次 [GitHub Actions 运行](https://github.com/yjt0416/poker-agent/actions/runs/36824219477) 的 `game` 与 `compose-smoke` 均通过：前者执行后端及 PostgreSQL 契约、前端测试/构建/安全审计、Chromium E2E 与并发牌桌冒烟；后者在 Linux Docker 上构建整栈，验证 Nginx 代理、SSE、数据库重启恢复及容器备份恢复。该结果验证了临时 CI 环境，不代表实际公网主机、域名、HTTPS、生产流量和异地备份已验收。本机仍未安装 Docker Engine。
+
+## 2026-10-02 本地全流程验收更新
+
+本轮针对当前根目录代码，使用 Java 21、原生 PostgreSQL 17.11 与离线 Agent 验收，不调用真实 DeepSeek。
+
+| 检查 | 本轮结果 |
+| --- | --- |
+| 后端常规套件 | 331 项通过 |
+| 前端单元测试 | 27 项通过 |
+| PostgreSQL 持久化契约 | 13 项 LocalIT 通过；无 Docker 的 13 项容器契约明确跳过，不计入通过数 |
+| 前端生产构建 | TypeScript 与 Vite 构建通过 |
+| npm 依赖审计 | 普通 `npm audit` 通过，0 漏洞 |
+
+本轮浏览器验收改用生产构建预览，九项场景分组通过：七项短流程、一次 319 手完整观战赛程及终局回放、三次实际淘汰后继续观战。首次整组执行暴露淘汰测试命令限额过低，修正后补测通过；修复内容、分组证据与最终结论见 [本地全流程验收](reviews/2026-10-01-local-acceptance.md)。真实大厅、牌桌、观战、冠军、回放及移动界面截图见 [README 游戏界面](../README.md#游戏界面)。
+
+每次推送还会触发 [GitHub Actions](https://github.com/yjt0416/poker-agent/actions/workflows/verify.yml) 的整组 E2E 和临时 Docker 整栈验证，具体结论以相同提交的运行记录为准。目标公网主机、域名 / HTTPS、生产负载、异地备份和正式故障恢复仍待在实际部署环境验收。

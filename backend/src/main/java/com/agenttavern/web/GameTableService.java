@@ -29,6 +29,7 @@ import com.agenttavern.tournament.TournamentEntrant;
 import com.agenttavern.tournament.TournamentId;
 import com.agenttavern.tournament.TournamentEvent;
 import com.agenttavern.tournament.TournamentMode;
+import com.agenttavern.tournament.TournamentSeatStatus;
 import com.agenttavern.tournament.TournamentStatus;
 import com.agenttavern.tournament.application.ActInTournamentCommand;
 import com.agenttavern.tournament.application.CreateTournamentCommand;
@@ -194,6 +195,10 @@ public class GameTableService {
             if (request == null || request.text() == null) throw new TableSessionException(400, "缺少发言内容");
             if (duplicate(table, request.command(), "chat:" + request.text())) return project(table);
             if (table.humanId == null) throw new TableSessionException(409, "观战模式不能代替 Agent 发言");
+            if (table.execution.checkpoint().status() == TournamentStatus.COMPLETE) {
+                throw new TableSessionException(409, "锦标赛已结束，不能继续发言");
+            }
+            if (!humanIsFunded(table)) throw new TableSessionException(409, "已淘汰玩家只能观战，不能继续影响牌桌");
             String text = TableChatPolicy.normalize(request.text());
             if (table.lastHumanChat != null && clock.instant().isBefore(table.lastHumanChat.plusSeconds(5))) {
                 throw new TableSessionException(429, "请等待 5 秒再发言");
@@ -216,14 +221,15 @@ public class GameTableService {
             if (table.execution.checkpoint().status() != TournamentStatus.BETWEEN_HANDS) {
                 throw new TableSessionException(409, "当前还不能开始下一手牌");
             }
+            int handNumber = Math.addExact(table.execution.checkpoint().completedHands(), 1);
             TableView view = commit(table, () -> {
                 table.execution = commands.startNextHand(new StartNextHandCommand(
                         command.commandId(), table.id, command.expectedVersion(), HandId.random()));
                 table.lastBoard = List.of();
                 table.lastHumanHoleCards = List.of();
                 table.memories.replaceAll((seat, memory) -> memory.nextHand());
-                table.addAction(-1, "茶馆荷官", "开始第 "
-                        + (table.execution.checkpoint().completedHands() + 1) + " 手牌", "盲注已下，卡牌已发出");
+                table.addAction(-1, "茶馆荷官", "开始第 " + handNumber + " 手牌", "盲注已下，卡牌已发出");
+                recordSettlement(table, null);
                 table.receipts.put(command.commandId(), "next");
             });
             schedule(table, false);
@@ -297,33 +303,54 @@ public class GameTableService {
     }
 
     private static void recordSettlement(RuntimeTable table, Hand completedHand) {
-        table.execution.events().stream()
+        List<HandEvent> events = table.execution.events().stream()
                 .map(event -> event.payload())
                 .filter(TournamentEvent.HandEventRecorded.class::isInstance)
                 .map(TournamentEvent.HandEventRecorded.class::cast)
                 .map(TournamentEvent.HandEventRecorded::handEvent)
+                .toList();
+        events.stream()
                 .filter(HandEvent.PotsAwarded.class::isInstance)
                 .map(HandEvent.PotsAwarded.class::cast)
                 .findFirst()
                 .ifPresent(awarded -> {
-                    for (var previousSeat : completedHand.seats()) {
-                        int seat = previousSeat.seatIndex();
+                    Map<Integer, Long> startingStacks = new LinkedHashMap<>();
+                    List<Card> finalBoard = new ArrayList<>();
+                    List<Card> humanHoleCards;
+                    if (completedHand != null) {
+                        completedHand.seats().forEach(previousSeat -> startingStacks.put(
+                                previousSeat.seatIndex(),
+                                Math.addExact(previousSeat.stack(), previousSeat.handCommitted())));
+                        finalBoard.addAll(completedHand.board());
+                        humanHoleCards = humanCards(table, completedHand);
+                    } else {
+                        HandEvent.HandStarted started = events.stream()
+                                .filter(HandEvent.HandStarted.class::isInstance)
+                                .map(HandEvent.HandStarted.class::cast)
+                                .findFirst()
+                                .orElseThrow(() -> new IllegalStateException("settled opening hand has no start event"));
+                        started.players().forEach(player -> startingStacks.put(player.seatIndex(), player.chips()));
+                        humanHoleCards = table.humanId == null ? List.of() : events.stream()
+                                .filter(HandEvent.HoleCardsDealt.class::isInstance)
+                                .map(HandEvent.HoleCardsDealt.class::cast)
+                                .findFirst()
+                                .map(dealt -> dealt.holeCards().getOrDefault(table.humanId, List.of()))
+                                .orElse(List.of());
+                    }
+                    for (var startingStack : startingStacks.entrySet()) {
+                        int seat = startingStack.getKey();
                         if (!table.memories.containsKey(seat)) continue;
                         long finalStack = table.execution.checkpoint().seats().stream()
                                 .filter(s -> s.seatIndex() == seat).findFirst().orElseThrow().stack();
                         table.memories.put(seat, table.memories.get(seat).outcome(
-                                finalStack - previousSeat.stack() - previousSeat.handCommitted()));
+                                finalStack - startingStack.getValue()));
                     }
-                    List<Card> finalBoard = new ArrayList<>(completedHand.board());
-                    table.execution.events().stream().map(event -> event.payload())
-                            .filter(TournamentEvent.HandEventRecorded.class::isInstance)
-                            .map(TournamentEvent.HandEventRecorded.class::cast)
-                            .map(TournamentEvent.HandEventRecorded::handEvent)
+                    events.stream()
                             .filter(HandEvent.CommunityCardsDealt.class::isInstance)
                             .map(HandEvent.CommunityCardsDealt.class::cast)
                             .forEach(event -> finalBoard.addAll(event.cards()));
                     table.lastBoard = List.copyOf(finalBoard);
-                    table.lastHumanHoleCards = humanCards(table, completedHand);
+                    table.lastHumanHoleCards = List.copyOf(humanHoleCards);
                     List<String> winners = awarded.payouts().entrySet().stream()
                             .map(entry -> winnerName(table, entry.getKey()) + "收下 " + entry.getValue() + " 筹码")
                             .toList();
@@ -384,7 +411,7 @@ public class GameTableService {
         Integer actorSeat = hand == null ? null : hand.actor().seatIndex();
         List<TableView.CardView> board = (hand == null ? table.lastBoard : hand.board()).stream()
                 .map(GameTableService::card).toList();
-        List<TableView.CardView> hole = table.humanId == null ? List.of()
+        List<TableView.CardView> hole = !humanIsFunded(table) ? List.of()
                 : (hand == null ? table.lastHumanHoleCards : humanCards(table, hand)).stream()
                         .map(GameTableService::card).toList();
         TableView.LegalActionView legal = hand != null && table.humanId != null && hand.actor().playerId().equals(table.humanId)
@@ -531,6 +558,11 @@ public class GameTableService {
     private static boolean canAdvance(RuntimeTable table) {
         return table.humanId == null || table.execution.checkpoint().seats().stream()
                 .anyMatch(s -> s.playerId().equals(table.humanId) && s.finishPosition() != null && s.finishPosition() > 1);
+    }
+
+    private static boolean humanIsFunded(RuntimeTable table) {
+        return table.humanId != null && table.execution.checkpoint().seats().stream()
+                .anyMatch(s -> s.playerId().equals(table.humanId) && s.status() == TournamentSeatStatus.FUNDED);
     }
 
     /** Duplicate receipts are checked before version validation, including after process recovery. */

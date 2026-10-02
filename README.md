@@ -1,122 +1,163 @@
 # Agent Tavern · 百兽茶馆
 
-Agent Tavern 是一款以多 Agent 为核心的趣味德州扑克游戏。玩家不仅能下注，也能在牌桌上发言、施压和诈唬；性格不同的 Agent 会把这些话作为不可信线索纳入决策。项目采用 Java 21 + Spring Boot 4 的服务端权威牌局、React 19 前端，以及可选的 DeepSeek 决策提供器。
+**一桌牌，六种心思。和性格各异的 AI 牌友过招，也可以坐下来，看它们争夺冠军。**
 
-## 当前可玩版本
+[![Verify game](https://github.com/yjt0416/poker-agent/actions/workflows/verify.yml/badge.svg)](https://github.com/yjt0416/poker-agent/actions/workflows/verify.yml)
+![Java 21](https://img.shields.io/badge/Java-21-ED8B00?logo=openjdk&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![Offline playable](https://img.shields.io/badge/无需_API_密钥-离线可玩-387B58)
 
-截至 2026-10-01：大厅、选角、实时同步、结果页和基础回放已实现；真实 PostgreSQL 会话恢复和事务回滚已验收，并补齐整栈启动配置、健康检查和 CI 冒烟流程。同场锦标赛内的 Agent 记忆、跨手情绪和发言去重已接通，已有可关闭的牌桌短音效、轻量动态反馈和匿名本地战绩。DeepSeek 真实联调已通过；断开 SSE 后的通知异常不会影响已提交牌局，过期会话及关联私有数据会定时清理。公开仓库的首次 GitHub Actions 已通过容器整栈和游戏测试；**实际公网主机、域名与 HTTPS 部署仍待验收**。功能清单见 [P0 进度](docs/reviews/2026-09-12-p0-progress.md)，最新验证见[部署与验收](docs/deployment.md)。
+![百兽茶馆真实玩家牌桌：角色、公共牌、筹码与行动面板](docs/images/table-desktop.png)
 
-- 精细化中国幻想茶馆界面、8 名统一风格 Q 版角色资产与本土化人物背景；
-- 玩家对 5 个 Agent 的真实牌局，服务端校验弃牌、过牌、跟注、加注和全下；
-- 大厅支持玩家/观战模式，8 位角色中选择 5/6 位牌友；当前规则固定为标准六人淘汰赛；
-- 六名 Agent 互战观战模式，支持单步、连续开局、0.5×/1×/2×/4×播放及角色日志筛选，不会向观众泄露底牌；
-- Agent 自动连续行动、四条街推进、摊牌、主池与边池结算；
-- HttpOnly 匿名会话和按玩家脱敏的公开投影，浏览器只能收到自己的底牌；
-- 可影响 Agent 输入的牌桌发言，含长度、控制字符、冷却和提示词注入防护；
-- 无密钥时使用会说自然中文的确定性离线决策器，配置后切换到 DeepSeek Flash；
-- 离线 Agent 按自身底牌、公共牌、跟注价格与整手投入预算决策，避免无视牌力的连续加注及大额跟注；策略边界见[离线策略验收](docs/reviews/2026-09-22-local-strategy.md)；
-- 每位 Agent 独立保存公开行动统计、有限私有笔记和近期发言，传入后续决策；胜负情绪跨手延续并衰减，牌桌展示公开情绪标签。PostgreSQL 模式支持进程重启恢复，另开一桌重新记忆；
-- SSE 按序号推送与断线补发，刷新恢复当前会话；动作带命令 ID 与期望版本，重复提交不重复扣筹码；
-- 冠军、最终排名、玩家淘汰后继续观战；当前会话的脱敏回放支持时间轴、逐步、播放、调速和跳转手牌；
-- PostgreSQL 检查点、事件流、Web 会话/聊天/界面日志/回放归档；真实数据库重启恢复及事务失败回滚测试通过。
-- Docker Compose、Windows/Unix 一键脚本、健康检查、SSE 反向代理、基础网关限流和独立整栈 CI 冒烟；GitHub Actions 已在 Linux Docker 环境通过。
-- 默认静音的牌桌合成提示音、音量设置、发牌/下注/弃牌轻量反馈，支持系统及应用内减少动态效果设置。
-- 当前浏览器内的匿名战绩页，统计完赛、胜率、累计盈亏、最大底池、行动习惯和各角色交手结果；观战不计入，刷新与断线补发按事件序号去重。
+Agent Tavern 是一款中国幻想茶馆风格的德州扑克游戏。你可以下注、诈唬，也可以开口试探对手；八位牌友各有脾气、策略和情绪，会把桌上的言语当作受控线索。所有发牌、合法动作与筹码结算由服务端裁定。
 
-发布主线仍缺：实际公网主机/HTTPS 验收、异地备份与正式故障恢复演练、生产负载验收。本机 PostgreSQL 归档恢复、真实 DeepSeek 适配器及 GitHub Actions 的容器版备份恢复校验已通过。本次联调密钥曾出现在聊天中，正式部署前必须撤销并更换。当前模型请求限额仅在单个后端进程内生效，尚非精确费用上限。自定义规则、关键手牌收藏、成就/难度/牌桌主题和完整角色动画暂缓；跨桌长期记忆与扩展回放视角也不作为本轮发布阻断项。
+**[立即运行](#立即运行) · [游戏界面](#游戏界面) · [验收记录](docs/reviews/2026-10-01-local-acceptance.md) · [部署指南](docs/deployment.md)**
 
-当前角色包括茶馆掌柜阿绯、矿场工头豪哥、票号账房沈听澜、退隐镖师杜叔、药铺学徒小满、说书人墨羽、商队主熊镇山和码头跑堂阿拾。角色保留独立的激进度、诈唬倾向、耐心和受挑衅敏感度；牌桌发言只作为受控心理线索，不会覆盖合法动作与服务端规则。
+## 玩法与体验
+
+| 你想怎么玩 | 茶馆为你准备了什么 |
+| --- | --- |
+| **亲自上桌** | 从八位角色中选出五位牌友，参加六人淘汰赛。弃牌、过牌、跟注、加注、全下由服务端校验。 |
+| **AI 决策剧场** | 六位 Agent 同桌竞技。暂停、单步、0.5× / 1× / 2× / 4× 连续播放，聚焦角色并查看公开行动记录。 |
+| **开口过招** | 聊天会影响有限的心理判断，不能改写规则或强制 Agent 执行动作。角色保留同场锦标赛内的记忆与跨手情绪。 |
+| **打完再复盘** | 冠军展示、完整排名、脱敏回放；按动作逐步播放、调速、跳转手牌，并查看当时的聊天与局面。 |
+| **随时回来** | SSE 实时同步、断线补发与刷新恢复。PostgreSQL 模式还能在后端重启后恢复牌桌、聊天和回放。 |
+| **轻松玩一局** | 无密钥即可使用离线 Agent。可关闭的短音效、音量设置、减少动态效果，以及匿名本地战绩。 |
+
+每人 **10,000 筹码**，起始盲注 **50 / 100**，**每 8 手升盲**；无前注，采用无上限下注规则。筹码归零后可以继续观战，直到产生唯一冠军。筹码均为游戏积分。
+
+## 游戏界面
+
+以下截图来自实际运行的游戏。
+
+| 挑选牌友，安排今晚的局 | 观看六位 Agent 争夺冠军 |
+| --- | --- |
+| ![大厅：玩家模式、AI 决策剧场与角色选择](docs/images/lobby.png) | ![观战：播放速度、角色聚焦与行动记录](docs/images/spectator.png) |
+
+| 冠军与最终排名 | 沿着时间轴复盘每一手 |
+| --- | --- |
+| ![锦标赛结果：冠军展示与六人排名](docs/images/results.png) | ![牌局回放：手牌选择、时间轴与播放控制](docs/images/replay.png) |
+
+<details>
+<summary>查看移动端牌桌</summary>
+
+![移动端牌桌：角色、公共牌与玩家行动](docs/images/table-mobile.png)
+
+窄屏保留可辨认的底牌和完整操作区；通过“动态”入口展开聊天及行动记录。
+
+</details>
 
 ## 立即运行
 
-已安装 Docker 时，Windows 运行 `.\scripts\start.ps1`，Unix 运行 `sh scripts/start.sh`，默认访问 `http://localhost:8088`。首次自动生成本地数据库密码。详细配置和验收边界见 [部署说明](docs/deployment.md)。
+### Docker 一键启动
 
-分开运行开发服务：
-
-要求：Java 21、Node.js 22 或更新版本。
-
-第一个 PowerShell 窗口：
+需要 Docker Engine / Docker Desktop（Linux 容器）及 Docker Compose。无需在宿主机另装 Java、Node.js 或 PostgreSQL。
 
 ```powershell
+# Windows：在项目根目录运行
+.\scripts\start.ps1
+```
+
+```sh
+# Linux / macOS
+sh scripts/start.sh
+```
+
+打开 **[http://localhost:8088](http://localhost:8088)**。脚本首次生成本地数据库密码，默认使用离线 Agent；数据库数据保存在命名卷中。配置、备份和停止服务的方法见 [部署指南](docs/deployment.md)。
+
+### 本地开发
+
+需要 **Java 21** 与 **Node.js 22**。在项目根目录分别打开两个终端：
+
+```powershell
+# 终端 1：后端
 cd backend
 .\mvnw.cmd spring-boot:run
 ```
 
-第二个 PowerShell 窗口：
-
 ```powershell
+# 终端 2：前端
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-打开 <http://localhost:5173>。默认 `local` profile 使用进程内存储，不要求 PostgreSQL 或 LLM 密钥；**后端进程退出会丢失 local 牌局**。后端未启动时，大厅显示连接错误，不会自动创建模拟牌局。
+打开 **[http://localhost:5173](http://localhost:5173)**，选择牌友后即可开局。默认 `local` 模式无需数据库与模型密钥；该模式将牌局保存在内存中，后端进程退出后数据会丢失。
 
-需要数据库持久化时，设置 `SPRING_PROFILES_ACTIVE=postgres`、`DATABASE_URL`（JDBC URL）、`DATABASE_USERNAME`、`DATABASE_PASSWORD` 后启动；Flyway 自动执行迁移。当前仅支持单后端实例，会话有效期 8 小时；过期数据再保留 24 小时，随后每 15 分钟分批清理会话、回放与对应锦标赛私有数据。另开一桌会替换当前浏览器会话，暂未提供旧桌历史列表。
+需要持久化时，使用 `postgres` profile 并配置 `DATABASE_URL`、`DATABASE_USERNAME`、`DATABASE_PASSWORD`。Docker 启动方案已包含 PostgreSQL 与自动数据库迁移。
 
-## 启用 DeepSeek
+### 可选：接入 DeepSeek
 
-启动后端前，只在当前终端设置环境变量：
+离线模式已提供完整游戏流程。若希望使用模型决策，在启动后端的终端设置：
 
 ```powershell
-$env:AGENT_TAVERN_AGENT_PROVIDER="deepseek"
-$env:DEEPSEEK_API_KEY="<你的新密钥>"
+cd backend
+$env:AGENT_TAVERN_AGENT_PROVIDER = "deepseek"
+$env:DEEPSEEK_API_KEY = "<你的密钥>"
 .\mvnw.cmd spring-boot:run
 ```
 
-默认模型为 `deepseek-flash`，可通过 `DEEPSEEK_MODEL` 覆盖。默认关闭思考模式、每次最多生成 512 Token，每个后端进程滚动一小时最多发起 120 次请求（包括修复重试）；可用 `DEEPSEEK_MAX_OUTPUT_TOKENS` 与 `DEEPSEEK_MAX_REQUESTS_PER_HOUR` 调整。达到限额后自动执行安全动作。此前粘贴到聊天中的密钥应视为已暴露，请在 DeepSeek 控制台撤销并生成新密钥。
+默认模型为 `deepseek-flash`。模型输出经过解析、合法动作校验与受控修复；请求超时、失败或额度用尽时执行安全降级。默认每次最多生成 512 Token，每个后端进程滚动一小时最多发起 120 次请求，可通过环境变量调整。该限制属于基础调用保护，不能代替账户费用预算。密钥仅通过环境变量传入，不要提交到 Git。
 
-## 状态边界与隐私
+## 设计与技术
 
-锦标赛的私有检查点会保存恢复所必需的底牌、余牌堆和烧牌，必须只保留在服务端。REST、SSE 与回放 API 只返回 `TableView` 脱敏投影，不会序列化检查点或原始领域事件。SSE 仅广播成功提交的受众专属投影；回放权限保持原会话范围。数据库只保存 Cookie 的 SHA-256 摘要。
+| 层次 | 实现 |
+| --- | --- |
+| 游戏引擎 | Java 21；确定性的牌局状态转换、牌型比较、主池 / 边池、淘汰与升盲。 |
+| 服务端 | Spring Boot 4；命令幂等、版本校验、HttpOnly 匿名会话、SSE 与健康检查。 |
+| Agent | 独立角色参数、同场记忆、情绪衰减；离线决策器与可选 DeepSeek 适配器。 |
+| 持久化 | PostgreSQL 17、Flyway；检查点、事件、命令回执、Web 会话与回放归档。 |
+| 前端 | React 19、TypeScript、Vite；大厅、牌桌、观战、结果、回放与本地战绩。 |
+| 验证与运行 | JUnit、Vitest、Playwright、axe；Docker Compose、Nginx 与 GitHub Actions。 |
 
-引擎使用 JUnit Jupiter 执行确定性的性质校验。每项校验使用固定且可复现的场景种子，不依赖 jqwik 或自动收缩。
+```text
+backend/       游戏引擎、锦标赛、Agent、API 与数据库持久化
+frontend/      游戏界面、角色资产、组件测试与浏览器测试
+scripts/       一键启动、整栈冒烟、并发验收与备份恢复
+deploy/        公网反向代理配置示例
+docs/          设计规格、部署指南与实际验收记录
+```
 
-## 环境要求
+浏览器只接收面向当前会话的脱敏投影：玩家只能看到自己的底牌，观众不会收到任何未公开底牌。REST、SSE 与回放保持相同权限范围；用于恢复的底牌和牌堆只保存在服务端。匿名战绩存于当前浏览器，观战不计入玩家战绩。
 
-安装 Java 21；前端开发还需要 Node.js 22+。
+## 测试与验收
 
-## 验证项目
+完整验收范围和本轮实际结果见 **[本地全流程验收](docs/reviews/2026-10-01-local-acceptance.md)**。浏览器流程覆盖开桌、聊天、行动、刷新恢复、实时同步、观战、淘汰后继续观看、完整锦标赛与回放；同时检查移动端布局及自动 WCAG A / AA 规则。
 
-当前本机验收：后端 330 项、前端 22 项、Chromium E2E 7 项通过，前端生产构建与 `npm audit --audit-level=high` 通过；真实 PostgreSQL 的 LocalIT 契约 13 项通过（9 项领域持久化、4 项 Web 恢复/回滚/私有记忆恢复/过期数据清理）。本机真实 PostgreSQL 后端通过健康、失效 SSE、开桌、聊天幂等、SSE 即时帧与会话回放冒烟；修复断开 SSE 后，完成五轮 40 桌/16 并发的直接后端验收，未再出现 Agent 任务中断。无 Docker 的对应容器用例跳过，容器整栈未验收。E2E 含自动 WCAG A/AA 检查及截图产物，尚无截图差异回归基线。
+本轮 **331 项后端测试、27 项前端测试、13 项 PostgreSQL 本地契约通过**；九项浏览器场景在生产预览下分组通过，完整观战赛程实际完成 319 手牌。容器契约在无 Docker 的本机明确跳过，由 Linux CI 单独验证。
 
-前端与浏览器测试（先启动 local 后端；Playwright 会按需启动 Vite）：
+后端验证（项目根目录，Java 21）：
+
+```powershell
+backend\mvnw.cmd -f backend\pom.xml verify
+
+# PostgreSQL 持久化契约；需要 Docker，或显式配置独立本地测试库
+backend\mvnw.cmd -f backend\pom.xml -Ppostgres-it verify
+```
+
+前端与浏览器验证：
 
 ```powershell
 cd frontend
 npm ci
 npm test
 npm run build
+npm audit --audit-level=high
 npx playwright install chromium
 npm run test:e2e
 ```
 
-Windows：
+运行浏览器测试前先启动 Java 后端。Playwright 默认构建前端并启动生产预览；本地已有 `5173` 服务时会复用。PostgreSQL 测试中明确跳过的项不算通过，独立测试库配置见 [部署指南](docs/deployment.md#自动验收)。
 
-```powershell
-backend\mvnw.cmd -f backend\pom.xml verify
-```
+GitHub Actions 的 [`Verify game`](https://github.com/yjt0416/poker-agent/actions/workflows/verify.yml) 执行游戏测试、生产构建、依赖审计、浏览器流程与并发冒烟，并在 Linux Docker 环境验证整栈、SSE、重启恢复和备份恢复。
 
-只运行引擎性质校验与架构守卫：
+## 当前边界
 
-```powershell
-backend\mvnw.cmd -f backend\pom.xml -Dtest="HandInvariantProperties,GameEngineDependencyTest" test
-```
+核心可玩流程与本地验收已形成完整闭环；公开仓库提供可自行运行的代码与部署配置。**实际公网主机、域名 / HTTPS、生产负载和异地备份恢复仍需在目标环境验收。**
 
-Unix 或 CI：
+- 当前支持单个后端实例，不能直接水平扩容。Compose 默认只开放本机 `8088`，公网部署需配置反向代理、HTTPS 与 Secure Cookie。
+- 会话有效期为 8 小时，过期数据按保留策略清理。另开一桌会替换当前浏览器会话，尚无旧桌历史列表；Agent 记忆限于同场锦标赛。
+- 自动浏览器验收以 Chromium 为主，尚无截图差异回归基线；真实设备、其他浏览器和辅助技术仍需补充验证。
+- 自定义规则、精彩牌局收藏、成就、难度、牌桌主题及完整角色动画暂缓。现有回放保持会话权限，暂未开放扩展玩家视角。
 
-```sh
-./backend/mvnw -f backend/pom.xml verify
-```
-
-PostgreSQL 持久化验收（Docker/Testcontainers 可用时）在 Java 21 下运行：
-
-```powershell
-backend\mvnw.cmd -f backend\pom.xml -Ppostgres-it verify
-```
-
-该 profile 在无 Docker 的机器上仍会运行领域、恢复、序列化和迁移契约；Docker 驱动的 `PostgresTournamentStoreIT` 会明确显示为 `SKIPPED`，这不等同于 Docker PostgreSQL 验收通过。可选的、显式配置的回环测试数据库 runner 使用 `POKER_TEST_DB_URL`、`POKER_TEST_DB_USERNAME` 和 `POKER_TEST_DB_PASSWORD` 环境变量；凭据不可写入仓库。
-
-## 密钥安全
-
-禁止将真实的 DeepSeek API Key 提交到 Git。凭据只能保存在本地且不受 Git 跟踪的配置中。
+更细的部署条件、运行指标、调用限额和验证记录均在 [部署指南](docs/deployment.md) 中说明。

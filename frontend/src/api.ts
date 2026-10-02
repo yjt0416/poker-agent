@@ -22,6 +22,9 @@ export class ApiError extends Error {
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController()
+  const abort = () => controller.abort()
+  init?.signal?.addEventListener('abort', abort, { once: true })
+  if (init?.signal?.aborted) controller.abort()
   const timeout = window.setTimeout(() => controller.abort(), 10_000)
   try {
     const response = await fetch(path, { credentials: 'include', ...init,
@@ -34,7 +37,10 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (error instanceof ApiError) throw error
     throw new ApiError(0, error instanceof DOMException && error.name === 'AbortError'
       ? '连接超时，正在核对最新牌局，请勿重复下注' : '无法连接牌桌服务，请确认后端已启动')
-  } finally { window.clearTimeout(timeout) }
+  } finally {
+    window.clearTimeout(timeout)
+    init?.signal?.removeEventListener('abort', abort)
+  }
 }
 
 let pendingEntry: Promise<TableView | null> | undefined
@@ -52,8 +58,8 @@ export function command(view: TableView, endpoint: string, payload: object = {},
     ...payload, commandId, tableId: view.tableId, expectedVersion: view.version,
   }) })
 }
-export function getReplay(view: TableView, after = 0) {
-  return request<ReplayPage>(`/api/tables/current/replay?tableId=${encodeURIComponent(view.tableId)}&after=${after}`)
+export function getReplay(view: TableView, after = 0, signal?: AbortSignal) {
+  return request<ReplayPage>(`/api/tables/current/replay?tableId=${encodeURIComponent(view.tableId)}&after=${after}`, { signal })
 }
 
 /** Reconnect with a durable cursor. Both live updates and catch-up frames use the same reducer. */
