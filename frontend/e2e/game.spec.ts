@@ -201,6 +201,8 @@ test('lobby and table meet automated WCAG A/AA checks', async ({ page }) => {
   await page.screenshot({ path: test.info().outputPath('desktop-table.png') })
 })
 
+test.describe('player elimination', () => {
+test.describe.configure({ retries: 0 })
 test('an eliminated player keeps a live spectator session after refresh', async ({ page, context }) => {
   test.setTimeout(5 * 60_000)
   const startedAt = Date.now()
@@ -225,6 +227,28 @@ test('an eliminated player keeps a live spectator session after refresh', async 
     if (response.status() === 409) return current()
     if (!response.ok()) throw new Error(`${endpoint} failed with HTTP ${response.status()}: ${await response.text()}`)
     return response.json() as Promise<FlowView>
+  }
+  async function expectEliminatedSession(target: Page, view: FlowView) {
+    expect(view.seats.find(seat => seat.self)?.status).toBe('ELIMINATED')
+    expect(view.canAdvance).toBe(true)
+    expect(view.holeCards).toEqual([])
+    expect(view.legalActions.types).toEqual([])
+    await expect(target.getByRole('textbox', { name: '牌桌发言' })).toHaveCount(0)
+    await expect(target.locator('.hero-cards')).toHaveCount(0)
+    await expect(target.locator('.statusbar > span').nth(1)).toHaveText(`已确认事件 ${view.sequence}`)
+    const advance = target.getByRole('button', { name: /^(推进一步|下一手)$/ })
+    if (view.status === 'COMPLETE') {
+      const selfRank = view.rankings.find(rank => rank.seat === view.selfSeat)
+      expect(selfRank?.position).toBeGreaterThan(1)
+      expect(selfRank?.position).toBeLessThanOrEqual(6)
+      await expect(target.getByRole('heading', { name: '今夜的赢家', exact: true })).toBeVisible()
+      await expect(target.locator('.final-ranks li')).toHaveCount(6)
+      await expect(target.locator('.final-ranks li').first()).toContainText('#1')
+      await expect(advance).toHaveCount(0)
+    } else {
+      expect(['IN_HAND', 'BETWEEN_HANDS']).toContain(view.status)
+      await expect(advance).toBeEnabled()
+    }
   }
 
   let view = await current()
@@ -273,35 +297,26 @@ test('an eliminated player keeps a live spectator session after refresh', async 
     return
   }
 
-  const self = view.seats.find(seat => seat.self)
-  expect(self?.status).toBe('ELIMINATED')
-  expect(view.canAdvance).toBe(true)
-  expect(view.holeCards).toEqual([])
-  await expect(page.getByRole('textbox', { name: '牌桌发言' })).toHaveCount(0)
-  await expect(page.locator('.hero-cards')).toHaveCount(0)
-
+  await expectEliminatedSession(page, view)
   const advance = page.getByRole('button', { name: /^(推进一步|下一手)$/ })
-  await expect(advance).toBeEnabled()
-  await expect(page.locator('.statusbar')).toContainText(`已确认事件 ${view.sequence}`)
   const observer = await context.newPage()
   await observer.goto('/', { waitUntil: 'domcontentloaded' })
-  await expect(observer.getByRole('button', { name: /^(推进一步|下一手)$/ })).toBeEnabled()
-  await expect(observer.getByRole('textbox', { name: '牌桌发言' })).toHaveCount(0)
-  await expect(observer.locator('.hero-cards')).toHaveCount(0)
+  await expectEliminatedSession(observer, view)
 
+  const tableId = view.tableId
   const beforeVersion = view.version
   await advance.click()
   await expect.poll(async () => (await current()).version).toBeGreaterThan(beforeVersion)
   view = await current()
-  await expect(observer.locator('.statusbar')).toContainText(`已确认事件 ${view.sequence}`)
+  expect(view.tableId).toBe(tableId)
+  await expectEliminatedSession(page, view)
+  await expectEliminatedSession(observer, view)
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await expect(page.getByRole('button', { name: /^(推进一步|下一手)$/ })).toBeEnabled()
-  await expect(page.getByRole('textbox', { name: '牌桌发言' })).toHaveCount(0)
-  await expect(page.locator('.hero-cards')).toHaveCount(0)
   const restored = await current()
-  expect(restored.tableId).toBe(view.tableId)
-  expect(restored.seats.find(seat => seat.self)?.status).toBe('ELIMINATED')
-  expect(restored.holeCards).toEqual([])
-  console.log(`Player elimination restored after ${commands} commands and ${Date.now() - startedAt}ms`)
+  expect(restored.tableId).toBe(tableId)
+  await expectEliminatedSession(page, restored)
+  await expectEliminatedSession(observer, restored)
+  console.log(`Player elimination restored as ${restored.status} after ${commands} commands and ${Date.now() - startedAt}ms`)
+})
 })

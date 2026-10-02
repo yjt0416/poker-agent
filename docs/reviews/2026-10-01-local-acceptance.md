@@ -20,6 +20,7 @@
 10. **移动底牌花色被玩家信息遮挡**：调整底牌排布；浏览器通过命中测试确认两个花色实际可见，仍保持操作区在首屏内。桌面侧栏导航也保持单行显示。
 11. **淘汰测试提前耗尽命令上限**：合法玩家在第 207 手仍有筹码，400 次命令不足以保证随机比赛结束。提高到 2000，保留四分钟期限和全部权限断言，未完成时输出诊断；三次独立复跑均实际进入淘汰后观战。
 12. **Linux CI 暴露异步推进测试竞态**：读到已提交版本不代表 Agent 工作线程已释放占用。连续推进的服务测试仅对精确的忙碌 409 做有期限重试，复用同一命令 ID；其他错误立即失败，生产并发保护保持有效。完整后端套件及三轮专项重复均通过。
+13. **淘汰用例遗漏后续合法终局**：远端淘汰用例曾在刷新后等待推进按钮超时，重试通过。用例没有覆盖观战推进一步后锦标赛恰好结束的情况；补齐终局排名、隐私和刷新恢复分支，并关闭该用例的自动重试。该原因来自源码与错误位置推断，绿色 CI 未保留首轮失败产物，不能把推断写成已复现的游戏故障。
 
 ## 已完成验证
 
@@ -32,6 +33,7 @@
 | npm 安全审计 | 10 月 2 日普通 `npm audit --audit-level=high` 通过，0 漏洞，无 DNS 或 TLS 覆盖 |
 | Chromium 短流程 | 生产预览下 7/7 通过，总耗时 24.8 秒，包含最新桌面导航与移动花色修复 |
 | 真实玩家淘汰 | 修正命令限额后三次独立生产预览复跑全部通过：235/203/179 个合法命令，14.9/13.6/11.8 秒；均实际淘汰，API 无底牌、无聊天入口、可继续推进、第二窗口 SSE 与刷新恢复均通过 |
+| 淘汰终局分支补验 | 关闭自动重试后最新三轮通过：343/204 个命令后淘汰续观战，457 个命令后玩家以第二名自然完赛。另一次 337 个合法玩家命令后淘汰，继续正常推进 17 步至 COMPLETE：183 手、玩家第三名；两个窗口的结果页、精确 SSE 序号、终局再次刷新、空底牌及禁聊全部通过 |
 | 完整观战赛程与终局回放 | 生产预览下通过，319 手、最终事件 3023、约 8.0 分钟；小满获得冠军及 60,000 筹码，六人排名、终局公共牌和结算日志、回放终局事件一致 |
 | PostgreSQL 持久化契约 | 本轮 13/13 LocalIT 通过；无 Docker 的 13 项容器契约明确跳过，不计入通过数 |
 | 真实 Java 进程重启 | 同 Cookie 的完整当前状态和回放严格一致：version 9、sequence 10、10 帧、8 条聊天、总筹码 60,000；SSE 补发、聊天/行动旧回执不重复提交 |
@@ -40,6 +42,8 @@
 | 本轮远端 Docker 整栈 | [运行 37023614869 的 compose-smoke](https://github.com/yjt0416/poker-agent/actions/runs/37023614869/job/110892594852) 通过生产构建、代理/SSE、数据库重启恢复及备份恢复；同次 game 暴露上述测试竞态，修正后的整组结果见最新同提交 Actions |
 
 本轮九项浏览器场景均已分组通过。首次生产预览整组为 8 通过、1 失败，失败是淘汰用例的命令上限；修正后该项独立复跑三次通过，并再次运行七项短流程。完整赛程未设置自动重试。远端整组执行及 Docker 环境验证以同一提交的 [GitHub Actions 记录](https://github.com/yjt0416/poker-agent/actions/workflows/verify.yml) 为准。
+
+[运行 37024744798](https://github.com/yjt0416/poker-agent/actions/runs/37024744798) 已通过 331 项后端、13 项 PostgreSQL 容器契约、27 项前端、生产构建、安全审计和 Docker 整栈；其 E2E 为 8 项首轮通过、1 项重试通过，不能计作九项零重试验收。后续提交补齐淘汰后的终局分支，验收以该提交的独立复跑与远端执行记录为准。
 
 ## 实测边界
 
@@ -55,5 +59,7 @@
 使用 Java 21 运行 `backend/mvnw.cmd -f backend/pom.xml verify`；前端运行 `npm test`、`npm run build`、`npm audit --audit-level=high`。启动后端后运行 `npm run test:e2e`。完整随机赛程允许最长 12 分钟且不自动重试，CI 游戏任务预留 30 分钟。
 
 本轮分组产物位于被 Git 忽略的 `build/local-acceptance/`：`production-final` 的完整赛程、`production-short-final` 的七项短流程，以及 `production-elimination-final`、`production-elimination-final-2`、`production-elimination-final-3` 的淘汰复跑。用例截图使用 Playwright 各自的输出目录，避免并行补测互相覆盖。
+
+额外真实淘汰后终局截图位于 `production-elimination-terminal-director/game-player-elimination-an-0ad7d-tator-session-after-refresh-chromium/` 的 `eliminated-terminal-results.png` 与 `eliminated-terminal-refresh.png`。补验使用正常玩家/观战命令，临时测试开关在提交前移除。
 
 README 使用的六张截图均于 10 月 2 日从实际生产预览页面捕获并人工检查，保存在仓库：[大厅](../images/lobby.png)、[玩家牌桌](../images/table-desktop.png)、[观战](../images/spectator.png)、[冠军与排名](../images/results.png)、[终局回放](../images/replay.png)、[移动牌桌](../images/table-mobile.png)。截图不包含会话 Cookie、API 密钥或请求头。
